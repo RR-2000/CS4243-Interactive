@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CV Lab</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">CV Lab</div>
+      <nav id="experimentNav" aria-label="Experiments"></nav>
+    </aside>
+
+    <main class="main">
+      <header class="toolbar">
+        <div class="source">
+          <canvas id="thumb" width="44" height="44"></canvas>
+          <span><b id="fileName">Sample image</b><small id="imageMeta">1200 × 800</small></span>
+        </div>
+        <div class="toolbar-actions">
+          <button class="button ghost" id="sampleButton">Sample</button>
+          <label class="button" for="fileInput">Upload</label>
+          <input id="fileInput" type="file" accept="image/*" hidden />
+          <button class="button dark" id="downloadButton">Download</button>
+        </div>
+      </header>
+
+      <div class="drop-zone" id="dropZone">Drop an image anywhere</div>
+
+      <section class="content">
+        <div class="experiment-header">
+          <div><span id="experimentIndex">01</span><h1 id="experimentTitle">Color channels</h1></div>
+          <p id="experimentDescription"></p>
+        </div>
+        <div id="experimentRoot"></div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="js/app.js?v=5"></script>
+</body>
+</html>
