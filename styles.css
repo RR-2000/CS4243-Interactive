@@ -276,6 +276,29 @@ button, input, select { font: inherit; }
 .sum-block ol { max-width: 290px; display: flex; flex-wrap: wrap; gap: 3px 14px; margin: 0 0 8px; padding-left: 22px; color: var(--muted); font: 9px monospace; }
 .sum-block b { font: 700 13px monospace; color: var(--accent); }
 
+.pseudocode {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.pseudocode summary {
+  padding: 11px 13px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  user-select: none;
+}
+.pseudocode[open] summary { border-bottom: 1px solid var(--border); }
+.pseudocode pre {
+  margin: 0;
+  padding: 14px;
+  overflow-x: auto;
+  background: #f5f5f5;
+  color: #303030;
+  font: 11px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+}
+
 @media (max-width: 900px) {
   .app { grid-template-columns: 64px minmax(0,1fr); }
   .sidebar { width: 64px; }
