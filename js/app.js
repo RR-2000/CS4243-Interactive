@@ -240,11 +240,820 @@ function cannyStable(gray,options){
   }
   return{magnitude,suppressed,edges,retained,strong,linked:queue.length};
 }
+
+const PSEUDOCODE={
+  effectsExplorer:[
+    'INPUT image, selected operation, parameter, kernel size',
+    'CONVERT image to grayscale intensity values',
+    'IF point operation: transform each pixel independently',
+    'ELSE IF histogram operation: build intensity mapping and remap pixels',
+    'ELSE: visit each pixel neighborhood and apply the selected filter',
+    'COMPUTE absolute difference between input and result',
+    'DISPLAY before, after, difference, and both histograms'
+  ],
+  matrixExplorer:[
+    'INPUT editable image matrix I and kernel K',
+    'IF convolution: flip K horizontally and vertically',
+    'PAD I using valid, zero, or copied-border padding',
+    'FOR each output position, moving by STRIDE:',
+    '    SAMPLE the receptive field using DILATION spacing',
+    '    IF pooling: output AVERAGE(field) or MAX(field)',
+    '    ELSE: products = field ⊙ K; output = SUM(products)',
+    'DISPLAY output grid, receptive field, products, and running sum'
+  ],
+  channels:[
+    'INPUT RGB image',
+    'IF RGB mode: keep one of R, G, B and set the other channels to zero',
+    'ELSE IF HSV mode: compute hue, saturation, and value for every pixel',
+    'ELSE: gray = 0.299R + 0.587G + 0.114B',
+    'DISPLAY original image and the requested components'
+  ],
+  adjustments:[
+    'FOR every RGB pixel:',
+    '    ADD brightness offset',
+    '    APPLY contrast factor around middle gray (128)',
+    '    COMPUTE luminance',
+    '    INTERPOLATE between luminance and color using saturation',
+    '    CLAMP each channel to [0, 255]',
+    'DISPLAY adjusted image'
+  ],
+  standardize:[
+    'CONVERT image to grayscale',
+    'COMPUTE mean μ and standard deviation σ',
+    'FOR every pixel x:',
+    '    z = (x - μ) / σ',
+    '    output = CLAMP(128 + scaling_coefficient × z, 0, 255)',
+    'DISPLAY standardized image and input statistics'
+  ],
+  gamma:[
+    'FOR every channel value x:',
+    '    normalized = x / 255',
+    '    mapped = normalized ^ gamma',
+    '    output = 255 × mapped',
+    'DISPLAY gamma-mapped image'
+  ],
+  histogram:[
+    'CONVERT image to grayscale and count pixels at intensities 0…255',
+    'IF stretching: map [minimum, maximum] linearly to [0, 255]',
+    'ELSE IF equalization: compute CDF and use it as the lookup table',
+    'ELSE: retain grayscale values',
+    'DISPLAY transformed image and output histogram'
+  ],
+  jpeg:[
+    'INPUT image and quality Q',
+    'CONVERT RGB blocks to a luminance/chrominance representation',
+    'APPLY block DCT, quantization controlled by Q, and entropy coding',
+    'DECODE the JPEG bytes back into pixels for display',
+    'REPORT encoded size, bytes per pixel, and reduction from raw RGB'
+  ],
+  selection:[
+    'SAMPLE target color T from the clicked pixel',
+    'FOR every pixel P:',
+    '    distance = SQRT((P.r-T.r)² + (P.g-T.g)² + (P.b-T.b)²)',
+    '    matched = distance ≤ tolerance',
+    'RENDER matched pixels as isolated color, overlay, or binary mask',
+    'REPORT percentage of matched pixels'
+  ],
+  filters:[
+    'PAD image using zeros or copied border values',
+    'FOR output y, x using the selected STRIDE:',
+    '    COLLECT the K × K receptive field',
+    '    MEDIAN: choose middle sorted value',
+    '    MAXIMUM: choose largest value',
+    '    BOX: compute arithmetic mean',
+    '    GAUSSIAN: weighted sum using exp(-(x²+y²)/(2σ²))',
+    'WRITE result to the output image'
+  ],
+  doglap:[
+    'CONVERT image to grayscale',
+    'IF Difference of Gaussians:',
+    '    blur₁ = GAUSSIAN(image, σ₁)',
+    '    blur₂ = GAUSSIAN(image, σ₂)',
+    '    response = blur₁ - blur₂',
+    'ELSE: response = image correlated with the Laplacian kernel',
+    'NORMALIZE signed response for display'
+  ],
+  sobel:[
+    'CONVERT image to grayscale',
+    'Gx = CORRELATE(image, horizontal Sobel kernel)',
+    'Gy = CORRELATE(image, vertical Sobel kernel)',
+    'magnitude = SQRT(Gx² + Gy²)',
+    'direction = ATAN2(Gy, Gx)',
+    'APPLY display gain and show Gx, Gy, and magnitude'
+  ],
+  canny:[
+    'SMOOTH grayscale image with a Gaussian filter',
+    'COMPUTE Sobel Gx, Gy, magnitude, and direction',
+    'NORMALIZE magnitude to [0, 255]',
+    'NON-MAXIMUM SUPPRESSION: keep local peaks along gradient direction',
+    'MARK pixels above HIGH threshold as strong seeds',
+    'FOLLOW 8-connected pixels above LOW threshold from every strong seed',
+    'OUTPUT the linked binary edge map'
+  ],
+  hough:[
+    'COMPUTE edge points from gradient magnitude',
+    'CREATE accumulator A(ρ, θ) initialized to zero',
+    'FOR every edge point (x, y) and angle θ:',
+    '    ρ = x cos(θ) + y sin(θ)',
+    '    A(ρ, θ) += 1',
+    'FIND separated local peaks above the vote threshold',
+    'DRAW the corresponding lines and display accumulator A'
+  ],
+  template:[
+    'SELECT template patch T from the source image',
+    'FOR every valid source position (x, y):',
+    '    W = source window at (x, y)',
+    '    CC(x,y) = SUM(W ⊙ T)',
+    '    ZNCC(x,y) = SUM((W-mean(W)) ⊙ (T-mean(T))) / (||Wc|| ||Tc||)',
+    'NORMALIZE response maps into heatmap colors',
+    'MARK the maximum response in each heatmap'
+  ]
+};
+
+const DETAILED_PSEUDOCODE={
+  effectsExplorer:`import numpy as np
+from scipy import ndimage
+
+image = to_grayscale(uploaded_image).astype(float)
+
+if operation == "invert":
+    result = 255 - image
+elif operation == "brightness":
+    result = np.clip(image + brightness_offset, 0, 255)
+elif operation == "gamma":
+    result = 255 * (image / 255) ** gamma
+elif operation == "threshold":
+    result = np.where(image >= threshold, 255, 0)
+elif operation == "histogram_stretch":
+    low, high = image.min(), image.max()
+    result = 255 * (image - low) / max(high - low, 1)
+elif operation == "histogram_equalization":
+    counts = np.bincount(image.astype(np.uint8).ravel(), minlength=256)
+    lookup_table = 255 * np.cumsum(counts) / image.size
+    result = lookup_table[image.astype(np.uint8)]
+elif operation == "average_smoothing":
+    result = ndimage.uniform_filter(image, size=kernel_size)
+elif operation == "sharpen":
+    blurred = ndimage.uniform_filter(image, size=kernel_size)
+    result = np.clip(image + gain * (image - blurred), 0, 255)
+elif operation == "median":
+    result = ndimage.median_filter(image, size=kernel_size)
+elif operation == "maximum":
+    result = ndimage.maximum_filter(image, size=kernel_size)
+
+difference = np.abs(result - image)
+before_histogram = np.histogram(image, bins=256, range=(0, 255))
+after_histogram = np.histogram(result, bins=256, range=(0, 255))
+display(image, result, difference, before_histogram, after_histogram)`,
+
+  matrixExplorer:`import numpy as np
+
+I = read_editable_image_matrix()       # H × W
+K = read_editable_kernel_matrix()      # kH × kW
+
+if operation == "convolution":
+    K = np.flip(K, axis=(0, 1))         # correlation does not flip K
+
+effective_kH = 1 + (K.shape[0] - 1) * dilation
+effective_kW = 1 + (K.shape[1] - 1) * dilation
+pad_y = 0 if padding == "valid" else effective_kH // 2
+pad_x = 0 if padding == "valid" else effective_kW // 2
+
+if padding == "zero":
+    padded = np.pad(I, ((pad_y, pad_y), (pad_x, pad_x)), mode="constant")
+elif padding == "copy":
+    padded = np.pad(I, ((pad_y, pad_y), (pad_x, pad_x)), mode="edge")
+else:
+    padded = I
+
+out_h = (padded.shape[0] - effective_kH) // stride + 1
+out_w = (padded.shape[1] - effective_kW) // stride + 1
+output = np.zeros((out_h, out_w))
+
+for oy in range(out_h):
+    for ox in range(out_w):
+        y0, x0 = oy * stride, ox * stride
+        field = padded[
+            y0 : y0 + effective_kH : dilation,
+            x0 : x0 + effective_kW : dilation,
+        ]
+
+        if pooling == "average":
+            output[oy, ox] = field.mean()
+        elif pooling == "max":
+            output[oy, ox] = field.max()
+        else:
+            products = field * K
+            running_sum = np.cumsum(products.ravel())
+            output[oy, ox] = running_sum[-1]
+
+highlight_receptive_field(selected_output_cell)
+display(field, K, products, running_sum, output)`,
+
+  channels:`import numpy as np
+from matplotlib.colors import rgb_to_hsv
+
+rgb = uploaded_image.astype(float) / 255
+R, G, B = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+
+if color_space == "RGB":
+    red_component   = np.dstack((R, 0*G, 0*B))
+    green_component = np.dstack((0*R, G, 0*B))
+    blue_component  = np.dstack((0*R, 0*G, B))
+    outputs = [red_component, green_component, blue_component]
+elif color_space == "HSV":
+    hsv = rgb_to_hsv(rgb)
+    hue, saturation, value = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    outputs = [hue, saturation, value]
+else:
+    grayscale = 0.299 * R + 0.587 * G + 0.114 * B
+    outputs = [grayscale]
+
+display(uploaded_image, *outputs)`,
+
+  adjustments:`import numpy as np
+
+rgb = uploaded_image.astype(float)
+
+# Brightness translates every channel by the same amount.
+rgb = rgb + 2.55 * brightness
+
+# Contrast expands or contracts values around middle gray.
+factor = 259 * (contrast + 255) / (255 * (259 - contrast))
+rgb = factor * (rgb - 128) + 128
+
+# Saturation interpolates between luminance and the original color.
+luminance = (
+    0.299 * rgb[..., 0]
+    + 0.587 * rgb[..., 1]
+    + 0.114 * rgb[..., 2]
+)[..., None]
+saturation_factor = 1 + saturation / 100
+result = luminance + saturation_factor * (rgb - luminance)
+
+result = np.clip(result, 0, 255).astype(np.uint8)
+display(uploaded_image, result)`,
+
+  standardize:`import numpy as np
+
+gray = to_grayscale(uploaded_image).astype(float)
+mu = gray.mean()
+sigma = gray.std()
+
+if sigma == 0:
+    z_score = np.zeros_like(gray)
+else:
+    z_score = (gray - mu) / sigma
+
+# Shift by 128 so negative standardized values remain visible.
+standardized = 128 + scaling_coefficient * z_score
+result = np.clip(standardized, 0, 255).astype(np.uint8)
+
+print("mean =", mu, "standard deviation =", sigma)
+display(gray, result)`,
+
+  gamma:`import numpy as np
+
+rgb = uploaded_image.astype(float)
+normalized = rgb / 255.0
+
+# gamma < 1 brightens; gamma > 1 darkens.
+mapped = normalized ** gamma
+result = np.clip(255 * mapped, 0, 255).astype(np.uint8)
+
+display(uploaded_image, result)`,
+
+  histogram:`import numpy as np
+
+gray = to_grayscale(uploaded_image).astype(np.uint8)
+histogram = np.bincount(gray.ravel(), minlength=256)
+
+if mode == "grayscale":
+    result = gray
+elif mode == "stretch":
+    minimum = np.flatnonzero(histogram)[0]
+    maximum = np.flatnonzero(histogram)[-1]
+    result = 255 * (gray - minimum) / max(maximum - minimum, 1)
+elif mode == "equalize":
+    cdf = np.cumsum(histogram)
+    cdf = cdf / cdf[-1]
+    lookup_table = np.round(255 * cdf).astype(np.uint8)
+    result = lookup_table[gray]
+
+output_histogram = np.bincount(result.astype(np.uint8).ravel(), minlength=256)
+display(gray, result)
+plt.plot(range(256), output_histogram)
+plt.xlim(0, 255); plt.show()`,
+
+  jpeg:`from io import BytesIO
+from PIL import Image
+import numpy as np
+
+source = Image.fromarray(uploaded_image)
+encoded = BytesIO()
+source.save(encoded, format="JPEG", quality=quality)
+
+# JPEG internally converts color, divides the image into blocks,
+# applies a DCT, quantizes coefficients, and entropy-encodes them.
+jpeg_bytes = encoded.getvalue()
+decoded = np.asarray(Image.open(BytesIO(jpeg_bytes)).convert("RGB"))
+
+raw_size = source.width * source.height * 3
+bytes_per_pixel = len(jpeg_bytes) / (source.width * source.height)
+reduction = 100 * (1 - len(jpeg_bytes) / raw_size)
+
+display(uploaded_image, decoded)
+print(len(jpeg_bytes), bytes_per_pixel, reduction)`,
+
+  selection:`import numpy as np
+
+rgb = uploaded_image.astype(float)
+target = rgb[clicked_y, clicked_x]       # [target_r, target_g, target_b]
+
+channel_difference = rgb - target
+distance = np.sqrt(np.sum(channel_difference ** 2, axis=2))
+mask = distance <= tolerance
+
+if mode == "mask":
+    result = np.where(mask[..., None], 255, 0)
+elif mode == "overlay":
+    result = rgb.copy()
+    result[mask] = [255, 210, 20]
+elif mode == "isolate":
+    luminance = to_grayscale(rgb)
+    result = np.repeat((0.22 * luminance)[..., None], 3, axis=2)
+    result[mask] = rgb[mask]
+
+matched_percentage = 100 * mask.mean()
+display(result)
+print("matched =", matched_percentage, "%")`,
+
+  filters:`import numpy as np
+from scipy import ndimage
+
+image = uploaded_image.astype(float)
+pad = kernel_size // 2
+
+if padding == "zero":
+    padded = np.pad(image, ((pad,pad), (pad,pad), (0,0)), mode="constant")
+else:
+    padded = np.pad(image, ((pad,pad), (pad,pad), (0,0)), mode="edge")
+
+output_h = (padded.shape[0] - kernel_size) // stride + 1
+output_w = (padded.shape[1] - kernel_size) // stride + 1
+output = np.zeros((output_h, output_w, 3))
+
+if filter_type == "gaussian":
+    coordinates = np.arange(-pad, pad + 1)
+    xx, yy = np.meshgrid(coordinates, coordinates)
+    kernel = np.exp(-(xx**2 + yy**2) / (2 * sigma**2))
+    kernel = kernel / kernel.sum()
+
+for oy in range(output_h):
+    for ox in range(output_w):
+        y, x = oy * stride, ox * stride
+        field = padded[y:y+kernel_size, x:x+kernel_size]
+
+        if filter_type == "median":
+            output[oy, ox] = np.median(field, axis=(0,1))
+        elif filter_type == "maximum":
+            output[oy, ox] = np.max(field, axis=(0,1))
+        elif filter_type == "box":
+            output[oy, ox] = np.mean(field, axis=(0,1))
+        elif filter_type == "gaussian":
+            output[oy, ox] = np.sum(field * kernel[...,None], axis=(0,1))
+
+display(np.clip(output, 0, 255).astype(np.uint8))`,
+
+  doglap:`import numpy as np
+from scipy import ndimage
+
+gray = to_grayscale(uploaded_image).astype(float)
+
+if operator == "difference_of_gaussians":
+    blur_small = ndimage.gaussian_filter(gray, sigma=sigma_1)
+    blur_large = ndimage.gaussian_filter(gray, sigma=sigma_2)
+    response = blur_small - blur_large
+else:
+    laplacian_kernel = np.array([
+        [0,  1, 0],
+        [1, -4, 1],
+        [0,  1, 0],
+    ])
+    response = ndimage.correlate(gray, laplacian_kernel, mode="nearest")
+
+# Signed responses are shifted around middle gray for display.
+display_response = 128 + 127 * response / max(np.abs(response).max(), 1)
+display(gray, display_response)`,
+
+  sobel:`import numpy as np
+from scipy import ndimage
+
+gray = to_grayscale(uploaded_image).astype(float)
+
+sobel_x = np.array([[-1,0,1], [-2,0,2], [-1,0,1]])
+sobel_y = np.array([[-1,-2,-1], [0,0,0], [1,2,1]])
+
+Gx = ndimage.correlate(gray, sobel_x, mode="nearest")
+Gy = ndimage.correlate(gray, sobel_y, mode="nearest")
+magnitude = np.hypot(Gx, Gy)
+direction = np.arctan2(Gy, Gx)
+
+display_Gx = np.clip(128 + display_gain * Gx / 4, 0, 255)
+display_Gy = np.clip(128 + display_gain * Gy / 4, 0, 255)
+display_magnitude = np.clip(display_gain * magnitude, 0, 255)
+
+display(display_Gx, display_Gy, display_magnitude)`,
+
+  canny:`import numpy as np
+from scipy import ndimage
+
+gray = to_grayscale(uploaded_image).astype(float)
+smoothed = ndimage.gaussian_filter(gray, sigma=blur_sigma)
+
+Gx = ndimage.sobel(smoothed, axis=1)
+Gy = ndimage.sobel(smoothed, axis=0)
+magnitude = np.hypot(Gx, Gy)
+magnitude = 255 * magnitude / max(magnitude.max(), 1)
+angle = (np.degrees(np.arctan2(Gy, Gx)) + 180) % 180
+
+suppressed = np.zeros_like(magnitude)
+for y, x in every_non_border_pixel():
+    dx, dy = quantize_gradient_direction(angle[y, x])
+    neighbors = [
+        magnitude[y + d*dy, x + d*dx]
+        for d in range(-nms_radius, nms_radius + 1)
+    ]
+    if magnitude[y, x] >= max(neighbors):
+        suppressed[y, x] = magnitude[y, x]
+
+strong = suppressed >= high_threshold
+weak = suppressed >= low_threshold
+edges = strong.copy()
+queue = list(np.argwhere(strong))
+
+# Hysteresis: retain weak pixels only when connected to a strong edge.
+while queue:
+    y, x = queue.pop(0)
+    for ny, nx in eight_connected_neighbors(y, x):
+        if weak[ny, nx] and not edges[ny, nx]:
+            edges[ny, nx] = True
+            queue.append((ny, nx))
+
+display(magnitude, suppressed, edges)`,
+
+  hough:`import numpy as np
+
+edges = sobel_magnitude(uploaded_image) >= edge_threshold
+edge_points = np.argwhere(edges)       # rows are [y, x]
+
+theta = np.linspace(0, np.pi, 120, endpoint=False)
+rho_max = int(np.ceil(np.hypot(image_width, image_height)))
+accumulator = np.zeros((2*rho_max + 1, len(theta)), dtype=int)
+
+for y, x in edge_points:
+    for theta_index, angle in enumerate(theta):
+        rho = round(x*np.cos(angle) + y*np.sin(angle))
+        accumulator[rho + rho_max, theta_index] += 1
+
+minimum_votes = vote_threshold * accumulator.max()
+candidates = local_maxima(accumulator, minimum=minimum_votes)
+candidates.sort(key=lambda peak: peak.votes, reverse=True)
+
+lines = []
+for peak in candidates:
+    if sufficiently_far_from_existing_peaks(peak, lines):
+        lines.append((peak.rho, peak.theta))
+    if len(lines) == maximum_lines:
+        break
+
+draw_polar_lines(uploaded_image, lines)
+display(accumulator)                   # horizontal θ, vertical ρ`,
+
+  template:`import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
+
+small_image = np.asarray(Image.fromarray(uploaded_image).resize((160, 120)))
+source = to_grayscale(small_image).astype(float)
+template = source[y:y+patch_height, x:x+patch_width]
+windows = sliding_window_view(source, template.shape)
+
+# Raw cross-correlation: bright regions can dominate this score.
+cc = np.einsum("ijkl,kl->ij", windows, template)
+
+# Zero-mean normalized cross-correlation is invariant to affine brightness.
+template_centered = template - template.mean()
+windows_centered = windows - windows.mean(axis=(-2,-1), keepdims=True)
+
+numerator = np.einsum("ijkl,kl->ij", windows_centered, template_centered)
+denominator = np.sqrt(
+    np.sum(windows_centered**2, axis=(-2,-1))
+    * np.sum(template_centered**2)
+)
+zncc = np.divide(numerator, denominator,
+                 out=np.zeros_like(numerator), where=denominator > 0)
+
+best_cc = np.unravel_index(np.argmax(cc), cc.shape)
+best_zncc = np.unravel_index(np.argmax(zncc), zncc.shape)
+
+display_heatmap(cc, marker=best_cc)
+display_heatmap(zncc, marker=best_zncc)`
+};
+
+const PYTHON_SAMPLE_HEADER=`# Install once if needed:
+# pip install numpy pillow matplotlib scipy
+
+from pathlib import Path
+from types import SimpleNamespace
+from io import BytesIO
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+from scipy import ndimage
+
+# Replace this fallback with: uploaded_image = np.asarray(Image.open("image.jpg").convert("RGB"))
+if Path("image.jpg").exists():
+    uploaded_image = np.asarray(Image.open("image.jpg").convert("RGB"))
+else:
+    yy, xx = np.mgrid[0:240, 0:320]
+    uploaded_image = np.dstack((xx / 319 * 255, yy / 239 * 255,
+                                (np.sin(xx / 18) + 1) * 127.5)).astype(np.uint8)
+
+def to_grayscale(image):
+    image = np.asarray(image, dtype=float)
+    return 0.299*image[..., 0] + 0.587*image[..., 1] + 0.114*image[..., 2]
+
+def display(*images):
+    fig, axes = plt.subplots(1, len(images), figsize=(5*len(images), 4))
+    axes = np.atleast_1d(axes)
+    for axis, image in zip(axes, images):
+        axis.imshow(image, cmap="gray" if np.asarray(image).ndim == 2 else None)
+        axis.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+def read_editable_image_matrix():
+    return np.arange(1, 26, dtype=float).reshape(5, 5)
+
+def read_editable_kernel_matrix():
+    return np.array([[1, 0, -1], [1, 0, -1], [1, 0, -1]], dtype=float)
+
+def highlight_receptive_field(cell):
+    print("Selected output cell:", cell)
+
+def every_non_border_pixel():
+    for y in range(nms_radius, magnitude.shape[0] - nms_radius):
+        for x in range(nms_radius, magnitude.shape[1] - nms_radius):
+            yield y, x
+
+def quantize_gradient_direction(angle):
+    if angle < 22.5 or angle >= 157.5: return 1, 0
+    if angle < 67.5: return 1, 1
+    if angle < 112.5: return 0, 1
+    return 1, -1
+
+def eight_connected_neighbors(y, x):
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            ny, nx = y + dy, x + dx
+            if (dx or dy) and 0 <= ny < magnitude.shape[0] and 0 <= nx < magnitude.shape[1]:
+                yield ny, nx
+
+def sobel_magnitude(image):
+    gray = to_grayscale(image)
+    return np.hypot(ndimage.sobel(gray, axis=1), ndimage.sobel(gray, axis=0))
+
+def local_maxima(array, minimum):
+    maxima = array == ndimage.maximum_filter(array, size=5, mode="wrap")
+    peaks = []
+    for rho_index, theta_index in np.argwhere(maxima & (array >= minimum)):
+        peaks.append(SimpleNamespace(rho=rho_index-rho_max, theta=theta_index,
+                                     votes=int(array[rho_index, theta_index])))
+    return peaks
+
+def sufficiently_far_from_existing_peaks(peak, lines):
+    return all(abs(peak.rho-rho) >= 8 or abs(peak.theta-theta_index) >= 5
+               for rho, theta_index in lines)
+
+def draw_polar_lines(image, lines):
+    plt.figure(figsize=(7, 5)); plt.imshow(image)
+    for rho, theta_index in lines:
+        angle = theta[theta_index]; c, s = np.cos(angle), np.sin(angle)
+        x0, y0 = c*rho, s*rho
+        plt.plot([x0-1000*s, x0+1000*s], [y0+1000*c, y0-1000*c], "r-")
+    plt.xlim(0, image.shape[1]); plt.ylim(image.shape[0], 0); plt.axis("off"); plt.show()
+
+def display_heatmap(values, marker=None):
+    plt.figure(figsize=(6, 4)); plt.imshow(values, cmap="turbo")
+    if marker is not None: plt.scatter(marker[1], marker[0], facecolors="none", edgecolors="white")
+    plt.colorbar(); plt.show()`;
+
+const PYTHON_SAMPLE_PARAMETERS={
+  effectsExplorer:`operation = "threshold"
+brightness_offset, gamma, threshold = 20, 0.8, 128
+kernel_size, gain = 3, 1.0`,
+  matrixExplorer:`operation, padding = "correlation", "zero"
+stride, dilation, pooling = 1, 1, "none"
+selected_output_cell = (0, 0)`,
+  channels:`color_space = "RGB"`,
+  adjustments:`brightness, contrast, saturation = 10, 20, 15`,
+  standardize:`scaling_coefficient = 32`,
+  gamma:`gamma = 0.8`,
+  histogram:`mode = "equalize"`,
+  jpeg:`quality = 70`,
+  selection:`clicked_y, clicked_x = uploaded_image.shape[0]//2, uploaded_image.shape[1]//2
+tolerance, mode = 40, "isolate"`,
+  filters:`filter_type, kernel_size = "gaussian", 3
+stride, padding, sigma = 1, "copy", 1.0`,
+  doglap:`operator = "difference_of_gaussians"
+sigma_1, sigma_2 = 1.0, 2.0`,
+  sobel:`display_gain = 1.0`,
+  canny:`blur_sigma, nms_radius = 1.2, 1
+low_threshold, high_threshold = 35, 85`,
+  hough:`edge_threshold, vote_threshold, maximum_lines = 90, 0.5, 12
+image_height, image_width = uploaded_image.shape[:2]`,
+  template:`from numpy.lib.stride_tricks import sliding_window_view
+x, y, patch_width, patch_height = 20, 20, 20, 20`
+};
+
+const SIMPLE_PYTHON_SAMPLES={
+  effectsExplorer:`import cv2
+import numpy as np
+from skimage import exposure
+
+def apply_effect(image, effect="threshold", value=128, kernel_size=3):
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    operations = {
+        "invert": lambda: 255 - gray,
+        "brightness": lambda: cv2.convertScaleAbs(gray, beta=value - 128),
+        "gamma": lambda: exposure.adjust_gamma(gray, gamma=max(value / 128, 0.01)),
+        "threshold": lambda: cv2.threshold(gray, value, 255, cv2.THRESH_BINARY)[1],
+        "stretch": lambda: exposure.rescale_intensity(gray, out_range=np.uint8),
+        "equalize": lambda: cv2.equalizeHist(gray),
+        "smooth": lambda: cv2.blur(gray, (kernel_size, kernel_size)),
+        "sharpen": lambda: cv2.addWeighted(gray, 2, cv2.blur(gray, (kernel_size, kernel_size)), -1, 0),
+        "median": lambda: cv2.medianBlur(gray, kernel_size),
+        "maximum": lambda: cv2.dilate(gray, np.ones((kernel_size, kernel_size), np.uint8)),
+    }
+    return operations[effect]()`,
+
+  matrixExplorer:`import numpy as np
+from scipy import signal, ndimage
+
+def apply_matrix_operation(image, kernel, operation="correlation", padding="same",
+                           stride=1, dilation=1, pooling=None):
+    image, kernel = np.asarray(image, float), np.asarray(kernel, float)
+    if pooling == "average":
+        return ndimage.uniform_filter(image, kernel.shape)[::stride, ::stride]
+    if pooling == "max":
+        return ndimage.maximum_filter(image, kernel.shape)[::stride, ::stride]
+    dilated = np.zeros(((kernel.shape[0]-1)*dilation+1, (kernel.shape[1]-1)*dilation+1))
+    dilated[::dilation, ::dilation] = kernel
+    function = signal.convolve2d if operation == "convolution" else signal.correlate2d
+    return function(image, dilated, mode=padding)[::stride, ::stride]`,
+
+  channels:`import cv2
+import numpy as np
+
+def split_color_channels(image, color_space="RGB"):
+    if color_space == "HSV":
+        return cv2.split(cv2.cvtColor(image, cv2.COLOR_RGB2HSV))
+    if color_space == "grayscale":
+        return (cv2.cvtColor(image, cv2.COLOR_RGB2GRAY),)
+    channels = cv2.split(image)
+    return tuple(cv2.merge([channel if i == j else np.zeros_like(channel)
+                            for i in range(3)]) for j, channel in enumerate(channels))`,
+
+  adjustments:`import cv2
+import numpy as np
+
+def adjust_image(image, brightness=0, contrast=0, saturation=0):
+    result = cv2.convertScaleAbs(image, alpha=1 + contrast / 100, beta=brightness)
+    hsv = cv2.cvtColor(result, cv2.COLOR_RGB2HSV).astype(float)
+    hsv[..., 1] = np.clip(hsv[..., 1] * (1 + saturation / 100), 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)`,
+
+  standardize:`import cv2
+import numpy as np
+
+def standardize_image(image, scale=32):
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY).astype(float)
+    standardized = (gray - gray.mean()) / (gray.std() or 1)
+    return np.clip(128 + scale * standardized, 0, 255).astype(np.uint8)`,
+
+  gamma:`import numpy as np
+
+def gamma_map(image, gamma=1.0):
+    return np.clip(255 * (image.astype(float) / 255) ** gamma, 0, 255).astype(np.uint8)`,
+
+  histogram:`import cv2
+
+def transform_histogram(image, mode="equalize", threshold=128):
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    if mode == "threshold":
+        return cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)[1]
+    if mode == "stretch":
+        return cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
+    return cv2.equalizeHist(gray)`,
+
+  jpeg:`from io import BytesIO
+import numpy as np
+from PIL import Image
+
+def compress_jpeg(image, quality=70):
+    buffer = BytesIO()
+    Image.fromarray(image).save(buffer, format="JPEG", quality=quality)
+    return np.asarray(Image.open(BytesIO(buffer.getvalue())).convert("RGB"))`,
+
+  selection:`import numpy as np
+
+def select_color(image, target_rgb, tolerance=40):
+    distance = np.linalg.norm(image.astype(float) - np.asarray(target_rgb), axis=2)
+    return (distance <= tolerance).astype(np.uint8) * 255`,
+
+  filters:`import cv2
+import numpy as np
+
+def apply_filter(image, kind="gaussian", kernel_size=3, sigma=1.0, stride=1):
+    filters = {
+        "median": lambda: cv2.medianBlur(image, kernel_size),
+        "maximum": lambda: cv2.dilate(image, np.ones((kernel_size, kernel_size), np.uint8)),
+        "gaussian": lambda: cv2.GaussianBlur(image, (kernel_size, kernel_size), sigma),
+        "box": lambda: cv2.blur(image, (kernel_size, kernel_size)),
+    }
+    return filters[kind]()[::stride, ::stride]`,
+
+  doglap:`import cv2
+
+def dog_or_laplacian(image, operator="dog", sigma1=1.0, sigma2=2.0):
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY).astype("float32")
+    if operator == "dog":
+        return cv2.GaussianBlur(gray, (0, 0), sigma1) - cv2.GaussianBlur(gray, (0, 0), sigma2)
+    return cv2.Laplacian(gray, cv2.CV_32F)`,
+
+  sobel:`import cv2
+import numpy as np
+
+def sobel_images(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1)
+    return gx, gy, np.hypot(gx, gy)`,
+
+  canny:`import cv2
+
+def canny_edges(image, low_threshold=35, high_threshold=85, blur_sigma=1.2):
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    blurred = cv2.GaussianBlur(gray, (0, 0), blur_sigma)
+    return cv2.Canny(blurred, low_threshold, high_threshold)`,
+
+  hough:`import cv2
+import numpy as np
+from skimage.transform import hough_line
+
+def detect_hough_lines(image, threshold=80):
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+    hough_space, _, _ = hough_line(edges > 0)
+    overlay = image.copy()
+    lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold)
+    if lines is not None:
+        for rho, theta in lines[:, 0]:
+            a, b = np.cos(theta), np.sin(theta)
+            x0, y0 = a*rho, b*rho
+            p1 = (int(x0 + 1000*(-b)), int(y0 + 1000*a))
+            p2 = (int(x0 - 1000*(-b)), int(y0 - 1000*a))
+            cv2.line(overlay, p1, p2, (255, 0, 0), 2)
+    return overlay, hough_space`,
+
+  template:`import cv2
+
+def match_template(image, template):
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    patch = cv2.cvtColor(template, cv2.COLOR_RGB2GRAY)
+    cross_correlation = cv2.matchTemplate(gray, patch, cv2.TM_CCORR)
+    normalized_zero_mean = cv2.matchTemplate(gray, patch, cv2.TM_CCOEFF_NORMED)
+    return cross_correlation, normalized_zero_mean`
+};
+
+function renderPseudocode(id){
+  const snippet=SIMPLE_PYTHON_SAMPLES[id];
+  if(!snippet)return;
+  const section=document.createElement('details');
+  section.className='pseudocode';
+  section.open=true;
+  const summary=document.createElement('summary');
+  summary.textContent='Python code sample';
+  const pre=document.createElement('pre');
+  const code=document.createElement('code');
+  code.textContent=snippet.trim();
+  pre.append(code);section.append(summary,pre);root.append(section);
+}
 function activeExperiment(){return experiments.find(x=>x.id===state.active)}
-function mount(id){state.active=id;const e=activeExperiment(),i=experiments.indexOf(e);$$('.nav-button').forEach(b=>b.classList.toggle('active',b.dataset.id===id));$('#experimentIndex').textContent=String(i+1).padStart(2,'0');$('#experimentTitle').textContent=e.title;$('#experimentDescription').textContent=e.description;e.mount()}
+function mount(id){state.active=id;const e=activeExperiment(),i=experiments.indexOf(e);$$('.nav-button').forEach(b=>b.classList.toggle('active',b.dataset.id===id));$('#experimentIndex').textContent=String(i+1).padStart(2,'0');$('#experimentTitle').textContent=e.title;$('#experimentDescription').textContent=e.description;e.mount();renderPseudocode(e.id)}
 function buildNav(){let group='';$('#experimentNav').innerHTML=experiments.map(e=>{const g=e.group!==group?`<div class="nav-group">${group=e.group}</div>`:'';return `${g}<button class="nav-button" data-id="${e.id}"><i>${e.icon}</i><span>${e.title}</span></button>`}).join('');$('#experimentNav').onclick=e=>{const b=e.target.closest('.nav-button');if(b)mount(b.dataset.id)}}
 function sample(){const c=state.source;c.width=1000;c.height=700;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,1000,700);g.addColorStop(0,'#f2c94c');g.addColorStop(.5,'#ed654e');g.addColorStop(1,'#3769da');x.fillStyle='#e7e7e1';x.fillRect(0,0,1000,700);x.fillStyle=g;x.fillRect(55,55,890,590);x.fillStyle='#17191d';x.fillRect(100,110,330,480);x.fillStyle='#f5c94c';x.beginPath();x.arc(715,260,145,0,Math.PI*2);x.fill();x.fillStyle='#3569db';x.beginPath();x.arc(755,455,105,0,Math.PI*2);x.fill();x.fillStyle='#ed5c49';x.fillRect(360,285,265,190);x.fillStyle='#fff';x.font='700 65px Arial';x.fillText('CV',155,280);x.fillText('LAB',125,365);state.name='Sample image';state.size=null;sourceChanged()}
-function sourceChanged(){const template=experiments.find(e=>e.id==='template');template.state.rect=null;template.state.drag=null;const c=$('#thumb');c.width=44;c.height=44;const crop=Math.min(state.source.width,state.source.height);c.getContext('2d').drawImage(state.source,(state.source.width-crop)/2,(state.source.height-crop)/2,crop,crop,0,0,44,44);$('#fileName').textContent=state.name;$('#imageMeta').textContent=`${state.source.width} × ${state.source.height}${state.size?' · '+formatBytes(state.size):''}`;activeExperiment()?.mount()}
+function sourceChanged(){const template=experiments.find(e=>e.id==='template');template.state.rect=null;template.state.drag=null;const c=$('#thumb');c.width=44;c.height=44;const crop=Math.min(state.source.width,state.source.height);c.getContext('2d').drawImage(state.source,(state.source.width-crop)/2,(state.source.height-crop)/2,crop,crop,0,0,44,44);$('#fileName').textContent=state.name;$('#imageMeta').textContent=`${state.source.width} × ${state.source.height}${state.size?' · '+formatBytes(state.size):''}`;const experiment=activeExperiment();experiment?.mount();if(experiment)renderPseudocode(experiment.id)}
 async function load(file){if(!file?.type.startsWith('image/'))return;const b=await createImageBitmap(file),[w,h]=fit(b.width,b.height);state.source.width=w;state.source.height=h;state.source.getContext('2d').drawImage(b,0,0,w,h);b.close();state.name=file.name;state.size=file.size;sourceChanged()}
 function bindGlobal(){$('#fileInput').onchange=e=>load(e.target.files[0]);$('#sampleButton').onclick=sample;$('#downloadButton').onclick=()=>{if(!state.output)return;const a=document.createElement('a');a.download=`cv-lab-${state.active}.png`;a.href=state.output.toDataURL('image/png');a.click()};['dragenter','dragover'].forEach(n=>document.addEventListener(n,e=>{e.preventDefault();$('#dropZone').classList.add('visible')}));document.addEventListener('dragleave',e=>{if(!e.relatedTarget)$('#dropZone').classList.remove('visible')});document.addEventListener('drop',e=>{e.preventDefault();$('#dropZone').classList.remove('visible');load(e.dataTransfer.files[0])})}
 
