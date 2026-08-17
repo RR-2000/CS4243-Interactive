@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CV Lab</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
   <div class="app">
@@ -21,9 +21,13 @@
         </div>
         <div class="toolbar-actions">
           <button class="button ghost" id="sampleButton">Sample</button>
+          <button class="button ghost" id="galleryButton" type="button" aria-expanded="false">Images</button>
           <label class="button" for="fileInput">Upload</label>
           <input id="fileInput" type="file" accept="image/*" hidden />
           <button class="button dark" id="downloadButton">Download</button>
+        </div>
+        <div class="image-picker" id="imagePicker" hidden>
+          <div class="image-picker-grid" id="imagePickerGrid" aria-label="Choose an image"></div>
         </div>
       </header>
 
@@ -38,6 +42,6 @@
       </section>
     </main>
   </div>
-  <script type="module" src="js/app.js?v=9"></script>
+  <script type="module" src="js/app.js?v=14"></script>
 </body>
 </html>
