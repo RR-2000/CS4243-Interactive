@@ -172,7 +172,7 @@ button, input, select { font: inherit; }
 .segment button:last-child { border-right: 0; }
 .segment button.active { background: #333; color: #fff; }
 
-.results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
 .results.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .results.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
@@ -182,14 +182,10 @@ button, input, select { font: inherit; }
 
 .canvas-box {
   position: relative;
-  height: 340px;
-  display: grid;
-  place-items: center;
   overflow: hidden;
   background: #eeeeee;
 }
-.canvas-box canvas { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
-.results.three .canvas-box, .results.four .canvas-box { height: 260px; }
+.canvas-box canvas { display: block; width: 100%; height: auto; }
 
 .note, .instruction {
   margin-top: 12px;
@@ -222,7 +218,7 @@ button, input, select { font: inherit; }
 
 .template-layout { display: grid; grid-template-columns: minmax(300px, 1.15fr) minmax(0, 1.85fr); gap: 12px; }
 .template-results { display: grid; gap: 12px; }
-.template-layout .canvas-box { height: 300px; }
+.template-layout .card { align-self: start; }
 .filter-note { align-self: center; color: var(--muted); font-size: 9px; }
 .loading { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(255,255,255,.85); font-size: 11px; }
 .error { padding: 12px; border: 1px solid #e6b5b5; background: #fff3f3; color: #a22; font-size: 11px; }
@@ -358,6 +354,5 @@ button, input, select { font: inherit; }
   .results, .results.four { grid-template-columns: 1fr; }
   .effect-histograms, .matrix-workspace { grid-template-columns: 1fr; }
   .output-section { grid-column: auto; }
-  .canvas-box, .results.three .canvas-box, .results.four .canvas-box { height: 240px; }
   .drop-zone { inset: 10px 10px 64px; }
 }
