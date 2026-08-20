@@ -54,7 +54,271 @@ const experiments=[
 {group:'Lines & edges',id:'canny',icon:'⌁',title:'Canny edge detection (L3)',description:'Smooth, differentiate, suppress non-maxima, then link edges using two thresholds.',state:{nms:1,low:35,high:85,sigma:1.2},mount(){root.innerHTML=`<div class="controls">${controlRange('cannyNms','NMS radius',1,4,this.state.nms)}${controlRange('cannyLow','Low threshold',1,180,this.state.low)}${controlRange('cannyHigh','High threshold',10,255,this.state.high)}${controlRange('cannySigma','Blur σ',.4,3,this.state.sigma,.1)}</div><div class="results three">${card('cannyGradient','Gradient magnitude')}${card('cannyNmsOut','After NMS')}${card('cannyEdges','Linked edges')}</div><div class="note">NMS radius controls how far Canny looks along the gradient direction when retaining only local peaks.</div>`;[['cannyNms','nms'],['cannyLow','low'],['cannyHigh','high'],['cannySigma','sigma']].forEach(([id,key])=>bindRange(id,v=>{this.state[key]=v;if(this.state.low>this.state.high)this.state.low=this.state.high;this.render()},key==='sigma'?v=>(+v).toFixed(1):v=>v));this.render()},render(){const g=workingGray(500),result=cannyCompute(g,this.state);scalarImage('cannyGradient',result.mag,g.w,g.h,false);scalarImage('cannyNmsOut',result.nms,g.w,g.h,false);binaryImage('cannyEdges',result.edges,g.w,g.h)}},
 {group:'Lines & edges',id:'hough',icon:'╱',title:'Hough line detection (L3)',description:'Vote for candidate lines in (ρ, θ) space and draw the strongest accumulator peaks.',state:{edgeThreshold:95,voteThreshold:48,lines:12},mount(){root.innerHTML=`<div class="controls">${controlRange('houghEdge','Edge threshold',20,220,this.state.edgeThreshold)}${controlRange('houghVote','Peak threshold',10,90,this.state.voteThreshold,1)}${controlRange('houghLines','Maximum lines',1,30,this.state.lines)}</div><div class="results">${card('houghOverlay','Detected lines')}${card('houghSpace','Hough accumulator','horizontal: θ · vertical: ρ')}</div><div class="stats"><div class="stat"><small>Edge points</small><b id="houghPoints">—</b></div><div class="stat"><small>Accumulator peak</small><b id="houghPeak">—</b></div><div class="stat"><small>Lines retained</small><b id="houghCount">—</b></div></div>`;[['houghEdge','edgeThreshold'],['houghVote','voteThreshold'],['houghLines','lines']].forEach(([id,key])=>bindRange(id,v=>{this.state[key]=v;this.render()}));this.render()},render(){const g=workingGray(360),s=sobelField(gaussian(g.data,g.w,g.h,1),g.w,g.h),thetaBins=120,diag=Math.ceil(Math.hypot(g.w,g.h)),rhoBins=diag*2+1,acc=new Uint32Array(thetaBins*rhoBins),cos=new Float32Array(thetaBins),sin=new Float32Array(thetaBins),points=[];for(let t=0;t<thetaBins;t++){const angle=t*Math.PI/thetaBins;cos[t]=Math.cos(angle);sin[t]=Math.sin(angle)}for(let y=1;y<g.h-1;y++)for(let x=1;x<g.w-1;x++)if(s.mag[y*g.w+x]>=this.state.edgeThreshold)points.push([x,y]);const step=Math.max(1,Math.ceil(points.length/12000));for(let p=0;p<points.length;p+=step){const[x,y]=points[p];for(let t=0;t<thetaBins;t++){const r=Math.round(x*cos[t]+y*sin[t])+diag;acc[r*thetaBins+t]++}}let peak=0;for(const v of acc)peak=Math.max(peak,v);const cutoff=peak*this.state.voteThreshold/100,candidates=[];for(let r=2;r<rhoBins-2;r++)for(let t=0;t<thetaBins;t++){const v=acc[r*thetaBins+t];if(v<cutoff)continue;let local=true;for(let dr=-2;dr<=2&&local;dr++)for(let dt=-2;dt<=2;dt++){const tt=(t+dt+thetaBins)%thetaBins;if(acc[(r+dr)*thetaBins+tt]>v){local=false;break}}if(local)candidates.push({r:r-diag,t,v})}candidates.sort((a,b)=>b.v-a.v);const lines=[];for(const q of candidates){if(lines.some(l=>Math.abs(l.r-q.r)<9&&Math.min(Math.abs(l.t-q.t),thetaBins-Math.abs(l.t-q.t))<5))continue;lines.push(q);if(lines.length>=this.state.lines)break}const out=$('#houghOverlay');out.width=g.w;out.height=g.h;const ctx=out.getContext('2d');ctx.drawImage(g.canvas,0,0);ctx.lineWidth=Math.max(1,g.w/300);ctx.strokeStyle='#ff3b30';for(const l of lines){const c=cos[l.t],sn=sin[l.t],x0=c*l.r,y0=sn*l.r;ctx.beginPath();ctx.moveTo(x0+1000*(-sn),y0+1000*c);ctx.lineTo(x0-1000*(-sn),y0-1000*c);ctx.stroke()}const heat=new ImageData(thetaBins,rhoBins);for(let i=0;i<acc.length;i++){const t=Math.sqrt(acc[i]/(peak||1)),[r,gg,b]=heatColor(t);heat.data[i*4]=r;heat.data[i*4+1]=gg;heat.data[i*4+2]=b;heat.data[i*4+3]=255}put('houghSpace',heat);state.output=out;$('#houghPoints').textContent=points.length.toLocaleString();$('#houghPeak').textContent=peak;$('#houghCount').textContent=lines.length}},
 {group:'Matching',id:'template',icon:'▣',title:'Template matching (L2)',description:'Drag a patch, then compare regular cross-correlation with normalized zero-mean correlation.',state:{rect:null,drag:null},mount(){root.innerHTML=`<div class="instruction">Drag over the source image to select a template patch. For responsiveness, matching is computed on a reduced grayscale image.</div><div class="template-layout"><div class="picker">${card('templateSource','Drag to select template')}<div class="stats"><div class="stat"><small>Patch</small><b id="patchSize">Not selected</b></div></div></div><div class="template-results">${card('ccHeat','Cross-correlation heatmap')}${card('znccHeat','Zero-mean normalized CC heatmap')}</div></div>`;const c=$('#templateSource');c.addEventListener('pointerdown',e=>this.down(e));c.addEventListener('pointermove',e=>this.move(e));c.addEventListener('pointerup',e=>this.up(e));this.renderSource()},renderSource(){canvas('templateSource');const box=$('#templateSource').parentElement,rect=document.createElement('span');rect.className='patch-rect';rect.id='patchRect';box.append(rect);if(this.state.rect)this.showRect()},point(e){const c=$('#templateSource'),r=c.getBoundingClientRect();return{x:clamp((e.clientX-r.left)/r.width*c.width,0,c.width),y:clamp((e.clientY-r.top)/r.height*c.height,0,c.height)}},down(e){e.currentTarget.setPointerCapture(e.pointerId);this.state.drag=this.point(e)},move(e){if(!this.state.drag)return;const p=this.point(e),a=this.state.drag;this.state.rect={x:Math.min(a.x,p.x),y:Math.min(a.y,p.y),w:Math.abs(a.x-p.x),h:Math.abs(a.y-p.y)};this.showRect()},up(e){if(!this.state.drag)return;this.move(e);this.state.drag=null;if(this.state.rect.w<8||this.state.rect.h<8){this.state.rect=null;$('#patchRect').style.display='none';return}this.match()},showRect(){const c=$('#templateSource'),r=c.getBoundingClientRect(),b=c.parentElement.getBoundingClientRect(),q=this.state.rect,m=$('#patchRect');m.style.display='block';m.style.left=(r.left-b.left+q.x/c.width*r.width)+'px';m.style.top=(r.top-b.top+q.y/c.height*r.height)+'px';m.style.width=(q.w/c.width*r.width)+'px';m.style.height=(q.h/c.height*r.height)+'px';$('#patchSize').textContent=`${Math.round(q.w)} × ${Math.round(q.h)}`},match(){const sourceGray=grayData(),scale=Math.min(1,320/sourceGray.width),w=Math.max(1,Math.round(sourceGray.width*scale)),h=Math.max(1,Math.round(sourceGray.height*scale)),tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;const orig=document.createElement('canvas');orig.width=sourceGray.width;orig.height=sourceGray.height;orig.getContext('2d').putImageData(sourceGray,0,0);tmp.getContext('2d').drawImage(orig,0,0,w,h);const data=tmp.getContext('2d').getImageData(0,0,w,h).data,q=this.state.rect,rx=Math.round(q.x*scale),ry=Math.round(q.y*scale),rw=clamp(Math.round(q.w*scale),3,Math.min(55,w-rx)),rh=clamp(Math.round(q.h*scale),3,Math.min(55,h-ry));if(rw<3||rh<3)return;const patch=[],step=Math.max(1,Math.ceil(Math.max(rw,rh)/35));for(let y=0;y<rh;y+=step)for(let x=0;x<rw;x+=step)patch.push(data[((ry+y)*w+rx+x)*4]);const meanT=patch.reduce((a,b)=>a+b,0)/patch.length,devT=patch.map(v=>v-meanT),normT=Math.sqrt(devT.reduce((a,b)=>a+b*b,0))||1,cc=new Float32Array(w*h),zn=new Float32Array(w*h);let minCC=Infinity,maxCC=-Infinity,minZN=Infinity,maxZN=-Infinity;for(let y=0;y<=h-rh;y++)for(let x=0;x<=w-rw;x++){let sum=0,mean=0,n=0;for(let j=0;j<rh;j+=step)for(let i=0;i<rw;i+=step){mean+=data[((y+j)*w+x+i)*4];n++}mean/=n;let numerator=0,norm=0,k=0;for(let j=0;j<rh;j+=step)for(let i=0;i<rw;i+=step){const v=data[((y+j)*w+x+i)*4],d=v-mean;sum+=v*patch[k];numerator+=d*devT[k];norm+=d*d;k++}const pos=y*w+x,z=numerator/(Math.sqrt(norm)*normT||1);cc[pos]=sum;zn[pos]=z;minCC=Math.min(minCC,sum);maxCC=Math.max(maxCC,sum);minZN=Math.min(minZN,z);maxZN=Math.max(maxZN,z)}this.heat('ccHeat',cc,w,h,minCC,maxCC);this.heat('znccHeat',zn,w,h,minZN,maxZN);state.output=$('#znccHeat')},heat(id,values,w,h,min,max){const out=new ImageData(w,h);for(let i=0;i<values.length;i++){const t=clamp((values[i]-min)/(max-min||1),0,1),[r,g,b]=heatColor(t);out.data[i*4]=r;out.data[i*4+1]=g;out.data[i*4+2]=b;out.data[i*4+3]=255}put(id,out)}}
+, {
+  group:'Motion',
+  id:'opticalFlow',
+  icon:'↝',
+  title:'Optical flow: single vs multi-scale',
+  description:'Track the same Sintel motion with single-scale and pyramidal Lucas–Kanade.',
+  state:{extraMotion:24,pyramidLevels:3,trackedPoints:220},
+  mount(){mountOpticalFlow(this)},
+  destroy(){destroyOpticalFlow(this)}
+}
 ];
+
+const FLOW_PROC_WIDTH=420;
+const FLOW_WINDOW=17;
+const flowRuntime={token:0,raf:0,ready:false,img1:null,img2:null,gt:null,frameA:null,frameB:null,points:[],single:[],multi:[]};
+
+function flowMetric(label,id){
+  return `<div class="flow-metric"><small>${label}</small><b id="${id}">—</b></div>`;
+}
+
+function flowCard(id,title,description,badge,metrics='',footer=''){
+  const meta=id==='flowSource'?'Sintel':id==='flowGt'?'reference':'Lucas–Kanade';
+  return `<figure class="card flow-card"><figcaption><span>${title}</span><small>${meta}</small></figcaption><div class="flow-sub">${description}</div><div class="canvas-box flow-media"><canvas id="${id}" aria-label="${title}"></canvas><span class="flow-badge">${badge}</span></div>${metrics?`<div class="flow-metrics">${metrics}</div>`:''}${footer}</figure>`;
+}
+
+function loadFlowImage(url){
+  return new Promise((resolve,reject)=>{
+    const image=new Image();
+    image.onload=()=>resolve(image);
+    image.onerror=()=>reject(new Error(`Could not load ${url}`));
+    image.src=url;
+  });
+}
+
+function mountOpticalFlow(experiment){
+  destroyOpticalFlow();
+  const token=flowRuntime.token,s=experiment.state;
+  root.innerHTML=`<div class="controls flow-controls">
+    ${controlRange('flowExtraMotion','Extra motion',0,36,s.extraMotion,2)}
+    ${controlRange('flowPyramidLevels','Pyramid levels',1,4,s.pyramidLevels)}
+    ${controlRange('flowTrackedPoints','Tracked points',80,360,s.trackedPoints,20)}
+  </div>
+  <div class="flow-grid flow-top-grid">
+    ${flowCard('flowSource','Original Sintel motion','Animated adjacent frame pair. This is the unmodified source motion.','original adjacent pair')}
+    ${flowCard('flowGt','GT dense flow','Reference answer for the original adjacent pair. Color encodes the dense ground-truth motion field.','GT for original pair only')}
+  </div>
+  <div class="note flow-notice"><b>Teaching stress test:</b> <b>Extra motion</b> shifts the second frame only for the comparison panels below. The GT dense flow above remains the ground truth for the <b>original adjacent Sintel pair</b>; it is not recalculated for the stressed pair.</div>
+  <div class="flow-grid flow-bottom-grid">
+    ${flowCard('flowSingle','Single-scale Lucas–Kanade','Full resolution only. <span class="flow-key flow-key-cyan">Cyan arrows</span> are estimates; <span class="flow-key flow-key-red">red rings</span> mark points the pyramid recovers.','full resolution · zero initialization',`${flowMetric('tracked points','flowSingleTracks')}${flowMetric('median displacement','flowSingleMedian')}`)}
+    ${flowCard('flowMulti','Multi-scale / pyramidal Lucas–Kanade','The same points and same pair. <span class="flow-key flow-key-green">Green arrows</span> are valid estimates; <span class="flow-key flow-key-yellow">yellow arrows</span> are correspondences recovered by the pyramid.','coarse → fine',`${flowMetric('tracked points','flowMultiTracks')}${flowMetric('recovered by pyramid','flowRecovered')}`)}
+    ${flowCard('flowPyramid','Why the pyramid helps','Downsampling makes the same displacement smaller in pixel units, so local linearization becomes easier before the estimate is refined at full resolution.','same motion · smaller at coarse scale','',`<div class="flow-formula" id="flowScaleFormula">24 px → 12 px → 6 px → 3 px</div>`)}
+  </div>
+  <div class="flow-status" id="flowStatus" role="status">Loading Sintel frames and computing the comparison…</div>
+  <div class="note flow-takeaway"><b>Classroom takeaway:</b> start at <b>Extra motion = 0 px</b>, then increase it toward <b>20–30 px</b>. Single-scale LK should lose more correspondences as displacement grows, while pyramidal LK can initialize the motion at a coarse level and refine it at finer levels.</div>
+  <div class="flow-source-note">Source frames and dense-flow visualization: <a href="https://github.com/open-mmlab/mmflow/tree/master/demo" target="_blank" rel="noopener noreferrer">MMFlow Sintel demo</a>. The extra translation is an explicit teaching stress test applied identically to both LK variants.</div>`;
+
+  bindRange('flowExtraMotion',value=>{experiment.state.extraMotion=value;computeOpticalFlow(experiment,token)},value=>`${value} px`);
+  bindRange('flowPyramidLevels',value=>{experiment.state.pyramidLevels=value;computeOpticalFlow(experiment,token)});
+  bindRange('flowTrackedPoints',value=>{experiment.state.trackedPoints=value;computeOpticalFlow(experiment,token)});
+  $('#flowExtraMotionOut').textContent=`${s.extraMotion} px`;
+  initializeOpticalFlow(experiment,token);
+}
+
+function destroyOpticalFlow(){
+  flowRuntime.token++;
+  if(flowRuntime.raf)cancelAnimationFrame(flowRuntime.raf);
+  flowRuntime.raf=0;flowRuntime.ready=false;flowRuntime.img1=null;flowRuntime.img2=null;flowRuntime.gt=null;
+  flowRuntime.frameA=null;flowRuntime.frameB=null;flowRuntime.points=[];flowRuntime.single=[];flowRuntime.multi=[];
+}
+
+async function initializeOpticalFlow(experiment,token){
+  try{
+    const base='images/optical-flow/';
+    const [img1,img2,gt]=await Promise.all([loadFlowImage(base+'frame_0001.png'),loadFlowImage(base+'frame_0002.png'),loadFlowImage(base+'frame_gt.png')]);
+    if(token!==flowRuntime.token||state.active!=='opticalFlow')return;
+    flowRuntime.img1=img1;flowRuntime.img2=img2;flowRuntime.gt=gt;flowRuntime.ready=true;
+    drawFlowImage('flowGt',gt);
+    computeOpticalFlow(experiment,token);
+    flowRuntime.raf=requestAnimationFrame(ts=>animateOpticalFlow(ts,token));
+  }catch(error){
+    if(token===flowRuntime.token&&$('#flowStatus'))$('#flowStatus').textContent=`Initialization failed: ${error.message}`;
+  }
+}
+
+function drawFlowImage(id,image){
+  const canvasElement=$('#'+id);if(!canvasElement)return;
+  canvasElement.width=image.naturalWidth||image.width;canvasElement.height=image.naturalHeight||image.height;
+  const context=canvasElement.getContext('2d');context.clearRect(0,0,canvasElement.width,canvasElement.height);context.drawImage(image,0,0,canvasElement.width,canvasElement.height);
+}
+
+function makeFlowFrame(image,shift){
+  const w=FLOW_PROC_WIDTH,h=Math.round((image.naturalHeight||image.height)*w/(image.naturalWidth||image.width)),canvasElement=document.createElement('canvas');
+  canvasElement.width=w;canvasElement.height=h;
+  const context=canvasElement.getContext('2d',{willReadFrequently:true});context.fillStyle='#111317';context.fillRect(0,0,w,h);context.drawImage(image,shift,0,w,h);
+  const pixels=context.getImageData(0,0,w,h).data,gray=new Float32Array(w*h);
+  for(let i=0,p=0;i<pixels.length;i+=4,p++)gray[p]=(.299*pixels[i]+.587*pixels[i+1]+.114*pixels[i+2])/255;
+  return{gray,w,h,canvas:canvasElement};
+}
+
+function flowSample(values,w,h,x,y){
+  if(x<1||y<1||x>w-2||y>h-2)return NaN;
+  const x0=Math.floor(x),y0=Math.floor(y),fx=x-x0,fy=y-y0,i=y0*w+x0;
+  return values[i]*(1-fx)*(1-fy)+values[i+1]*fx*(1-fy)+values[i+w]*(1-fx)*fy+values[i+w+1]*fx*fy;
+}
+
+function downsampleFlow(values,w,h){
+  const nw=Math.max(2,Math.floor(w/2)),nh=Math.max(2,Math.floor(h/2)),out=new Float32Array(nw*nh);
+  for(let y=0;y<nh;y++)for(let x=0;x<nw;x++){
+    const x0=Math.min(w-1,2*x),y0=Math.min(h-1,2*y),x1=Math.min(w-1,x0+1),y1=Math.min(h-1,y0+1);
+    out[y*nw+x]=(values[y0*w+x0]+values[y0*w+x1]+values[y1*w+x0]+values[y1*w+x1])*.25;
+  }
+  return{gray:out,w:nw,h:nh};
+}
+
+function flowPyramid(frame,levels){
+  const pyramid=[frame];
+  for(let level=0;level<levels;level++)pyramid.push(downsampleFlow(pyramid[pyramid.length-1].gray,pyramid[pyramid.length-1].w,pyramid[pyramid.length-1].h));
+  return pyramid;
+}
+
+function detectFlowCorners(values,w,h,maximum){
+  const candidates=[];
+  for(let y=5;y<h-5;y+=4)for(let x=5;x<w-5;x+=4){
+    let xx=0,xy=0,yy=0;
+    for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+      const i=(y+dy)*w+x+dx,gx=(values[i+1]-values[i-1])*.5,gy=(values[i+w]-values[i-w])*.5;
+      xx+=gx*gx;xy+=gx*gy;yy+=gy*gy;
+    }
+    const trace=xx+yy,discriminant=Math.sqrt(Math.max(0,(xx-yy)*(xx-yy)+4*xy*xy)),score=(trace-discriminant)*.5;
+    if(score>.0015)candidates.push({x,y,score});
+  }
+  candidates.sort((a,b)=>b.score-a.score);
+  const points=[];
+  for(const candidate of candidates){
+    let separated=true;
+    for(const point of points){const dx=point.x-candidate.x,dy=point.y-candidate.y;if(dx*dx+dy*dy<49){separated=false;break}}
+    if(separated)points.push(candidate);
+    if(points.length>=maximum)break;
+  }
+  return points;
+}
+
+function lkFlowLevel(a,b,w,h,x,y,u0,v0,radius,iterations){
+  let u=u0,v=v0,residual=.5,valid=true;
+  const stride=radius>7?2:1;
+  for(let iteration=0;iteration<iterations;iteration++){
+    let A=0,B=0,C=0,D=0,E=0,error=0,samples=0;
+    for(let dy=-radius;dy<=radius;dy+=stride)for(let dx=-radius;dx<=radius;dx+=stride){
+      const px=x+dx,py=y+dy,qx=px+u,qy=py+v,i1=flowSample(a,w,h,px,py),i2=flowSample(b,w,h,qx,qy);
+      if(!Number.isFinite(i1)||!Number.isFinite(i2))continue;
+      const ix=(flowSample(b,w,h,qx+1,qy)-flowSample(b,w,h,qx-1,qy))*.5,iy=(flowSample(b,w,h,qx,qy+1)-flowSample(b,w,h,qx,qy-1))*.5;
+      if(!Number.isFinite(ix)||!Number.isFinite(iy))continue;
+      const temporal=i2-i1;A+=ix*ix;B+=ix*iy;C+=iy*iy;D+=-ix*temporal;E+=-iy*temporal;error+=Math.abs(temporal);samples++;
+    }
+    if(samples<12){valid=false;break}
+    const determinant=A*C-B*B;
+    if(determinant<1e-5){valid=false;break}
+    let du=(C*D-B*E)/determinant,dv=(A*E-B*D)/determinant,magnitude=Math.hypot(du,dv);
+    if(magnitude>2.5){du*=2.5/magnitude;dv*=2.5/magnitude}
+    u+=du;v+=dv;residual=error/samples;
+    if(Math.hypot(du,dv)<.025)break;
+  }
+  if(!Number.isFinite(u)||!Number.isFinite(v)||residual>.23)valid=false;
+  return{u,v,residual,valid};
+}
+
+function trackSingleFlow(frameA,frameB,points){
+  const radius=Math.floor(FLOW_WINDOW/2);
+  return points.map(point=>({x:point.x,y:point.y,...lkFlowLevel(frameA.gray,frameB.gray,frameA.w,frameA.h,point.x,point.y,0,0,radius,5)}));
+}
+
+function trackMultiFlow(frameA,frameB,points,levels){
+  const pyramidA=flowPyramid(frameA,levels),pyramidB=flowPyramid(frameB,levels);
+  return points.map(point=>{
+    let u=0,v=0,residual=.5,valid=true;
+    for(let level=levels;level>=0;level--){
+      if(level<levels){u*=2;v*=2}
+      const scale=2**level,result=lkFlowLevel(pyramidA[level].gray,pyramidB[level].gray,pyramidA[level].w,pyramidA[level].h,point.x/scale,point.y/scale,u,v,Math.max(3,Math.floor(FLOW_WINDOW/2)),5);
+      u=result.u;v=result.v;residual=result.residual;
+      if(!result.valid){valid=false;break}
+    }
+    return{x:point.x,y:point.y,u,v,residual,valid};
+  });
+}
+
+function flowRecovered(index){
+  const single=flowRuntime.single[index],multi=flowRuntime.multi[index];
+  return Boolean(multi?.valid&&(!single?.valid||(single.residual>multi.residual*1.65&&multi.residual<.18)));
+}
+
+function flowMedian(values){
+  if(!values.length)return 0;
+  const sorted=[...values].sort((a,b)=>a-b),middle=sorted.length>>1;
+  return sorted.length%2?sorted[middle]:(sorted[middle-1]+sorted[middle])/2;
+}
+
+function drawFlowArrow(context,x,y,u,v,progress,color,width){
+  const gain=1.5,endX=x+u*gain*progress,endY=y+v*gain*progress,angle=Math.atan2(v,u),head=4;
+  context.strokeStyle=color;context.fillStyle=color;context.lineWidth=width;context.beginPath();context.moveTo(x,y);context.lineTo(endX,endY);context.stroke();
+  if(progress>.75){context.beginPath();context.moveTo(endX,endY);context.lineTo(endX-head*Math.cos(angle-.55),endY-head*Math.sin(angle-.55));context.lineTo(endX-head*Math.cos(angle+.55),endY-head*Math.sin(angle+.55));context.closePath();context.fill()}
+}
+
+function drawFlowPanel(id,tracks,isMulti,progress){
+  const canvasElement=$('#'+id);if(!canvasElement||!flowRuntime.frameA)return;
+  canvasElement.width=flowRuntime.frameA.w;canvasElement.height=flowRuntime.frameA.h;
+  const context=canvasElement.getContext('2d');context.drawImage(flowRuntime.frameA.canvas,0,0);context.fillStyle='rgba(0,0,0,.28)';context.fillRect(0,0,canvasElement.width,canvasElement.height);
+  for(let index=0;index<tracks.length;index++){
+    const track=tracks[index];
+    if(track.valid){
+      const recovered=isMulti&&flowRecovered(index),color=recovered?'#ffd84d':(isMulti?'#3ddc84':'#4dd8ff');
+      drawFlowArrow(context,track.x,track.y,track.u,track.v,progress,color,recovered?2.2:1.2);
+    }else if(!isMulti&&flowRecovered(index)){
+      context.strokeStyle='#ff5a5f';context.lineWidth=1.7;context.beginPath();context.arc(track.x,track.y,3.1,0,Math.PI*2);context.stroke();
+    }
+  }
+}
+
+function drawFlowPyramid(){
+  const canvasElement=$('#flowPyramid');if(!canvasElement||!flowRuntime.frameA)return;
+  const width=flowRuntime.frameA.w,height=flowRuntime.frameA.h,levels=experiments.find(experiment=>experiment.id==='opticalFlow').state.pyramidLevels,motion=experiments.find(experiment=>experiment.id==='opticalFlow').state.extraMotion;
+  canvasElement.width=width;canvasElement.height=height;
+  const context=canvasElement.getContext('2d');context.fillStyle='#17191d';context.fillRect(0,0,width,height);
+  const maxWidth=width-44,maxHeight=height-42;
+  for(let level=0;level<=levels;level++){
+    const scale=1/(2**level),boxWidth=maxWidth*scale,boxHeight=maxHeight*scale,x=22+(maxWidth-boxWidth)/2,y=16+(maxHeight-boxHeight)/2;
+    context.strokeStyle=level===0?'#dbeafe':`hsl(${205+level*22} 90% 65%)`;context.lineWidth=1.5;context.strokeRect(x,y,boxWidth,boxHeight);
+    context.fillStyle='#fff';context.font='11px monospace';context.fillText(level===0?`full: ${motion}px`:`level ${level}: ${(motion/(2**level)).toFixed(motion%(2**level)?1:0)}px`,x+5,y+14);
+  }
+  context.fillStyle='#dbeafe';context.font='bold 13px Arial';context.fillText('same displacement → fewer pixels at coarse scale',18,height-10);
+  const values=[];for(let level=0;level<=levels;level++){const scaled=motion/(2**level);values.push(`${Number.isInteger(scaled)?scaled:scaled.toFixed(1)} px`)}
+  $('#flowScaleFormula').textContent=values.join(' → ');
+}
+
+function updateFlowMetrics(){
+  const singleValid=flowRuntime.single.filter(track=>track.valid),multiValid=flowRuntime.multi.filter(track=>track.valid);let recovered=0;
+  for(let index=0;index<flowRuntime.multi.length;index++)if(flowRecovered(index))recovered++;
+  $('#flowSingleTracks').textContent=singleValid.length;$('#flowMultiTracks').textContent=multiValid.length;$('#flowSingleMedian').textContent=`${(flowMedian(singleValid.map(track=>Math.hypot(track.u,track.v)))||0).toFixed(1)} px`;$('#flowRecovered').textContent=recovered;
+}
+
+function computeOpticalFlow(experiment,token=flowRuntime.token){
+  if(!flowRuntime.ready||token!==flowRuntime.token||state.active!=='opticalFlow')return;
+  const {extraMotion,pyramidLevels,trackedPoints}=experiment.state;
+  flowRuntime.frameA=makeFlowFrame(flowRuntime.img1,0);flowRuntime.frameB=makeFlowFrame(flowRuntime.img2,extraMotion);
+  flowRuntime.points=detectFlowCorners(flowRuntime.frameA.gray,flowRuntime.frameA.w,flowRuntime.frameA.h,trackedPoints);
+  flowRuntime.single=trackSingleFlow(flowRuntime.frameA,flowRuntime.frameB,flowRuntime.points);
+  flowRuntime.multi=trackMultiFlow(flowRuntime.frameA,flowRuntime.frameB,flowRuntime.points,pyramidLevels);
+  const multiBadge=$('#flowMulti')?.parentElement?.querySelector('.flow-badge');
+  if(multiBadge)multiBadge.textContent=`${pyramidLevels+1} resolutions · coarse → fine`;
+  updateFlowMetrics();drawFlowPyramid();drawFlowPanel('flowSingle',flowRuntime.single,false,.9);drawFlowPanel('flowMulti',flowRuntime.multi,true,.9);state.output=$('#flowMulti');
+  $('#flowStatus').textContent=`Ready · ${flowRuntime.points.length} shared points · extra motion ${extraMotion}px · same stressed input used for both LK variants.`;
+}
+
+function drawOriginalFlowFrame(progress){
+  const canvasElement=$('#flowSource');if(!canvasElement||!flowRuntime.img1||!flowRuntime.img2)return;
+  const width=flowRuntime.img1.naturalWidth||flowRuntime.img1.width,height=flowRuntime.img1.naturalHeight||flowRuntime.img1.height;canvasElement.width=width;canvasElement.height=height;
+  const context=canvasElement.getContext('2d');context.fillStyle='#111317';context.fillRect(0,0,width,height);context.globalAlpha=1;context.drawImage(flowRuntime.img1,0,0,width,height);context.globalAlpha=progress;context.drawImage(flowRuntime.img2,0,0,width,height);context.globalAlpha=1;
+}
+
+function animateOpticalFlow(timestamp,token){
+  if(token!==flowRuntime.token||state.active!=='opticalFlow')return;
+  const phase=(timestamp%1500)/1500,progress=.15+.85*(.5-.5*Math.cos(phase*Math.PI*2));
+  drawOriginalFlowFrame(progress);
+  if(flowRuntime.ready){drawFlowPanel('flowSingle',flowRuntime.single,false,progress);drawFlowPanel('flowMulti',flowRuntime.multi,true,progress)}
+  flowRuntime.raf=requestAnimationFrame(next=>animateOpticalFlow(next,token));
+}
 
 function heatColor(t){const stops=[[25,28,71],[38,90,170],[37,184,173],[245,210,72],[218,55,46]],x=t*(stops.length-1),i=Math.min(stops.length-2,Math.floor(x)),f=x-i;return stops[i].map((v,k)=>v+(stops[i+1][k]-v)*f)}
 function workingGray(max=520){const scale=Math.min(1,max/Math.max(state.source.width,state.source.height)),w=Math.max(1,Math.round(state.source.width*scale)),h=Math.max(1,Math.round(state.source.height*scale)),c=document.createElement('canvas');c.width=w;c.height=h;const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(state.source,0,0,w,h);const pixels=ctx.getImageData(0,0,w,h).data,data=new Float32Array(w*h);for(let i=0,p=0;i<pixels.length;i+=4,p++)data[p]=.299*pixels[i]+.587*pixels[i+1]+.114*pixels[i+2];return{data,w,h,canvas:c}}
@@ -1081,7 +1345,18 @@ def match_template(image, template):
     patch = cv2.cvtColor(template, cv2.COLOR_RGB2GRAY)
     cross_correlation = cv2.matchTemplate(gray, patch, cv2.TM_CCORR)
     normalized_zero_mean = cv2.matchTemplate(gray, patch, cv2.TM_CCOEFF_NORMED)
-    return cross_correlation, normalized_zero_mean`
+    return cross_correlation, normalized_zero_mean`,
+
+  opticalFlow:`import cv2
+import numpy as np
+
+def compare_lucas_kanade(frame_a, frame_b, pyramid_levels=3):
+    gray_a = cv2.cvtColor(frame_a, cv2.COLOR_RGB2GRAY)
+    gray_b = cv2.cvtColor(frame_b, cv2.COLOR_RGB2GRAY)
+    corners = cv2.goodFeaturesToTrack(gray_a, maxCorners=220, qualityLevel=0.01, minDistance=7)
+    single, _, _ = cv2.calcOpticalFlowPyrLK(gray_a, gray_b, corners, None, maxLevel=0)
+    multi, _, _ = cv2.calcOpticalFlowPyrLK(gray_a, gray_b, corners, None, maxLevel=pyramid_levels)
+    return corners, single, multi`
 };
 
 const WIKI={
@@ -1110,7 +1385,10 @@ const WIKI={
   canny:'https://en.wikipedia.org/wiki/Canny_edge_detector',
   nms:'https://en.wikipedia.org/wiki/Non-maximum_suppression',
   hough:'https://en.wikipedia.org/wiki/Hough_transform',
-  template:'https://en.wikipedia.org/wiki/Template_matching'
+  template:'https://en.wikipedia.org/wiki/Template_matching',
+  opticalFlow:'https://en.wikipedia.org/wiki/Optical_flow',
+  lucasKanade:'https://en.wikipedia.org/wiki/Lucas%E2%80%93Kanade_method',
+  imagePyramid:'https://en.wikipedia.org/wiki/Pyramid_(image_processing)'
 };
 
 const param=(name,value,description,active=true)=>({name,value:String(value),description,active});
@@ -1143,6 +1421,7 @@ function guideFor(id){
   if(id==='canny')return{overview:'All four controls participate in the Canny pipeline.',params:[param('NMS radius',s.nms,'Number of pixels compared in both directions along the gradient when retaining local maxima.'),param('Low threshold',s.low,'Weak-edge cutoff. These pixels survive only when connected to a strong edge.'),param('High threshold',s.high,'Strong-edge seed cutoff. It is kept above the low threshold.'),param('Blur sigma',s.sigma,'Gaussian smoothing applied before gradients; larger values suppress more noise and fine detail.')],links:[link('Canny edge detector',WIKI.canny),link('Non-maximum suppression',WIKI.nms),link('Gaussian blur',WIKI.gaussian)]};
   if(id==='hough')return{overview:'All three sliders affect either the edge candidates, accumulator peaks, or rendered lines. Only the accumulator visual is remapped with nearest-neighbor sampling to match the input image aspect ratio.',params:[param('Edge threshold',s.edgeThreshold,'Minimum Sobel magnitude required for a pixel to vote.'),param('Peak threshold',`${s.voteThreshold}%`,'Minimum accumulator value as a percentage of the strongest vote.'),param('Maximum lines',s.lines,'Caps the number of separated accumulator peaks drawn on the image.'),param('Accumulator display','Input aspect ratio','Changes only the displayed Hough-space shape; the underlying θ–ρ votes and detected peaks are unchanged.')],links:[link('Hough transform',WIKI.hough)]};
   if(id==='template')return{overview:'There are no sliders. The dragged rectangle is the tunable input: its position and dimensions define the template patch.',params:[param('Patch',s.rect?`${Math.round(s.rect.w)} × ${Math.round(s.rect.h)}`:'Not selected','The selected pixels are compared at every valid source position using CC and zero-mean normalized CC.',Boolean(s.rect))],links:[link('Template matching',WIKI.template),link('Cross-correlation',WIKI.correlation)]};
+  if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants. Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',s.pyramidLevels,'Adds coarser resolutions before the full-resolution refinement. The display shows one more resolution than the number of downsampling steps.'),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
   return null;
 }
 
@@ -1205,10 +1484,17 @@ function renderPseudocode(id){
   pre.append(code);section.append(summary,pre);root.append(section);
 }
 function activeExperiment(){return experiments.find(x=>x.id===state.active)}
-function mount(id){state.active=id;const e=activeExperiment(),i=experiments.indexOf(e);$$('.nav-button').forEach(b=>b.classList.toggle('active',b.dataset.id===id));$('#experimentIndex').textContent=String(i+1).padStart(2,'0');$('#experimentTitle').textContent=e.title;$('#experimentDescription').textContent=e.description;e.mount();renderParameterGuide(e.id);renderPseudocode(e.id)}
+function mount(id){
+  activeExperiment()?.destroy?.();
+  state.active=id;
+  const e=activeExperiment(),i=experiments.indexOf(e);
+  $$('.nav-button').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
+  $('#experimentIndex').textContent=String(i+1).padStart(2,'0');$('#experimentTitle').textContent=e.title;$('#experimentDescription').textContent=e.description;
+  e.mount();renderParameterGuide(e.id);renderPseudocode(e.id);
+}
 function buildNav(){let group='';$('#experimentNav').innerHTML=experiments.map(e=>{const g=e.group!==group?`<div class="nav-group">${group=e.group}</div>`:'';return `${g}<button class="nav-button" data-id="${e.id}"><i>${e.icon}</i><span>${e.title}</span></button>`}).join('');$('#experimentNav').onclick=e=>{const b=e.target.closest('.nav-button');if(b)mount(b.dataset.id)}}
 function sample(){const c=state.source;c.width=1000;c.height=700;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,1000,700);g.addColorStop(0,'#f2c94c');g.addColorStop(.5,'#ed654e');g.addColorStop(1,'#3769da');x.fillStyle='#e7e7e1';x.fillRect(0,0,1000,700);x.fillStyle=g;x.fillRect(55,55,890,590);x.fillStyle='#17191d';x.fillRect(100,110,330,480);x.fillStyle='#f5c94c';x.beginPath();x.arc(715,260,145,0,Math.PI*2);x.fill();x.fillStyle='#3569db';x.beginPath();x.arc(755,455,105,0,Math.PI*2);x.fill();x.fillStyle='#ed5c49';x.fillRect(360,285,265,190);x.fillStyle='#fff';x.font='700 65px Arial';x.fillText('CV',155,280);x.fillText('LAB',125,365);state.name='Sample image';state.size=null;sourceChanged()}
-function sourceChanged(){const template=experiments.find(e=>e.id==='template');template.state.rect=null;template.state.drag=null;const c=$('#thumb');c.width=44;c.height=44;const crop=Math.min(state.source.width,state.source.height);c.getContext('2d').drawImage(state.source,(state.source.width-crop)/2,(state.source.height-crop)/2,crop,crop,0,0,44,44);$('#fileName').textContent=state.name;$('#imageMeta').textContent=`${state.source.width} × ${state.source.height}${state.size?' · '+formatBytes(state.size):''}`;const experiment=activeExperiment();experiment?.mount();if(experiment){renderParameterGuide(experiment.id);renderPseudocode(experiment.id)}}
+function sourceChanged(){const template=experiments.find(e=>e.id==='template');template.state.rect=null;template.state.drag=null;const c=$('#thumb');c.width=44;c.height=44;const crop=Math.min(state.source.width,state.source.height);c.getContext('2d').drawImage(state.source,(state.source.width-crop)/2,(state.source.height-crop)/2,crop,crop,0,0,44,44);$('#fileName').textContent=state.name;$('#imageMeta').textContent=`${state.source.width} × ${state.source.height}${state.size?' · '+formatBytes(state.size):''}`;const experiment=activeExperiment();experiment?.destroy?.();experiment?.mount();if(experiment){renderParameterGuide(experiment.id);renderPseudocode(experiment.id)}}
 async function load(file){if(!file?.type.startsWith('image/'))return;const b=await createImageBitmap(file),[w,h]=fit(b.width,b.height);state.source.width=w;state.source.height=h;state.source.getContext('2d').drawImage(b,0,0,w,h);b.close();state.name=file.name;state.size=file.size;sourceChanged()}
 async function loadBundledImage(url,button){
   const image=new Image();
