@@ -7,7 +7,23 @@ const root=$('#experimentRoot');
 function fit(w,h,max=1200){const s=Math.min(1,max/Math.max(w,h));return [Math.round(w*s),Math.round(h*s)]}
 function sourceData(){return state.source.getContext('2d',{willReadFrequently:true}).getImageData(0,0,state.source.width,state.source.height)}
 function canvas(id,source=state.source){const c=$('#'+id);c.width=source.width;c.height=source.height;c.getContext('2d',{willReadFrequently:true}).drawImage(source,0,0);return c}
-function put(id,data){const c=$('#'+id);c.width=data.width;c.height=data.height;c.getContext('2d').putImageData(data,0,0);state.output=c;return c}
+function put(id,data){
+  const c=$('#'+id);
+  if(id==='houghSpace'){
+    const accumulator=document.createElement('canvas');
+    accumulator.width=data.width;accumulator.height=data.height;
+    accumulator.getContext('2d').putImageData(data,0,0);
+    const [w,h]=fit(state.source.width,state.source.height,360);
+    c.width=w;c.height=h;
+    const context=c.getContext('2d');
+    context.imageSmoothingEnabled=false;
+    context.drawImage(accumulator,0,0,w,h);
+  }else{
+    c.width=data.width;c.height=data.height;
+    c.getContext('2d').putImageData(data,0,0);
+  }
+  state.output=c;return c;
+}
 function card(id,title,meta=''){return `<figure class="card"><figcaption><span>${title}</span><small>${meta}</small></figcaption><div class="canvas-box"><canvas id="${id}"></canvas></div></figure>`}
 function controlRange(id,label,min,max,value,step=1){return `<div class="control"><label for="${id}">${label}<output id="${id}Out">${value}</output></label><input id="${id}" type="range" min="${min}" max="${max}" value="${value}" step="${step}"></div>`}
 function segment(id,items,active){return `<div class="segment" id="${id}">${items.map(([v,l])=>`<button data-value="${v}" class="${v===active?'active':''}">${l}</button>`).join('')}</div>`}
@@ -159,13 +175,14 @@ templateExplorer.up=function(event){
   setTimeout(()=>this.match(),20);
 };
 templateExplorer.showRect=function(){
-  const c=$('#templateSource'),bounds=c.getBoundingClientRect(),box=c.parentElement.getBoundingClientRect(),q=this.state.rect,marker=$('#patchRect');
+  const c=$('#templateSource'),q=this.state.rect,marker=$('#patchRect');
   if(!q||!marker)return;
+  const scaleX=c.offsetWidth/c.width,scaleY=c.offsetHeight/c.height;
   marker.style.display='block';
-  marker.style.left=`${bounds.left-box.left+q.x/c.width*bounds.width}px`;
-  marker.style.top=`${bounds.top-box.top+q.y/c.height*bounds.height}px`;
-  marker.style.width=`${q.w/c.width*bounds.width}px`;
-  marker.style.height=`${q.h/c.height*bounds.height}px`;
+  marker.style.left=`${c.offsetLeft+q.x*scaleX}px`;
+  marker.style.top=`${c.offsetTop+q.y*scaleY}px`;
+  marker.style.width=`${q.w*scaleX}px`;
+  marker.style.height=`${q.h*scaleY}px`;
   $('#patchSize').textContent=`${Math.round(q.w)} × ${Math.round(q.h)}`;
 };
 templateExplorer.match=function(){
@@ -1124,7 +1141,7 @@ function guideFor(id){
   }
   if(id==='sobel')return{overview:'Fixed Sobel kernels compute Gx and Gy. Their magnitude and orientation modulo 180° are displayed separately.',params:[param('Display gain',s.scale,'Multiplies the Gx, Gy, and magnitude views only. It does not change the orientation view or the detected gradients.'),param('Orientation range','0°–180°','Computed as atan2(Gy, Gx) modulo 180°. Opposite gradient directions share a hue; brightness represents gradient magnitude.')],links:[link('Sobel operator',WIKI.sobel),link('Image gradient',WIKI.imageGradient)]};
   if(id==='canny')return{overview:'All four controls participate in the Canny pipeline.',params:[param('NMS radius',s.nms,'Number of pixels compared in both directions along the gradient when retaining local maxima.'),param('Low threshold',s.low,'Weak-edge cutoff. These pixels survive only when connected to a strong edge.'),param('High threshold',s.high,'Strong-edge seed cutoff. It is kept above the low threshold.'),param('Blur sigma',s.sigma,'Gaussian smoothing applied before gradients; larger values suppress more noise and fine detail.')],links:[link('Canny edge detector',WIKI.canny),link('Non-maximum suppression',WIKI.nms),link('Gaussian blur',WIKI.gaussian)]};
-  if(id==='hough')return{overview:'All three sliders affect either the edge candidates, accumulator peaks, or rendered lines.',params:[param('Edge threshold',s.edgeThreshold,'Minimum Sobel magnitude required for a pixel to vote.'),param('Peak threshold',`${s.voteThreshold}%`,'Minimum accumulator value as a percentage of the strongest vote.'),param('Maximum lines',s.lines,'Caps the number of separated accumulator peaks drawn on the image.')],links:[link('Hough transform',WIKI.hough)]};
+  if(id==='hough')return{overview:'All three sliders affect either the edge candidates, accumulator peaks, or rendered lines. Only the accumulator visual is remapped with nearest-neighbor sampling to match the input image aspect ratio.',params:[param('Edge threshold',s.edgeThreshold,'Minimum Sobel magnitude required for a pixel to vote.'),param('Peak threshold',`${s.voteThreshold}%`,'Minimum accumulator value as a percentage of the strongest vote.'),param('Maximum lines',s.lines,'Caps the number of separated accumulator peaks drawn on the image.'),param('Accumulator display','Input aspect ratio','Changes only the displayed Hough-space shape; the underlying θ–ρ votes and detected peaks are unchanged.')],links:[link('Hough transform',WIKI.hough)]};
   if(id==='template')return{overview:'There are no sliders. The dragged rectangle is the tunable input: its position and dimensions define the template patch.',params:[param('Patch',s.rect?`${Math.round(s.rect.w)} × ${Math.round(s.rect.h)}`:'Not selected','The selected pixels are compared at every valid source position using CC and zero-mean normalized CC.',Boolean(s.rect))],links:[link('Template matching',WIKI.template),link('Cross-correlation',WIKI.correlation)]};
   return null;
 }
