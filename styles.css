@@ -5,6 +5,7 @@
   --muted: #6f6f6f;
   --border: #dddddd;
   --accent: #2563eb;
+  --canvas-viewer-max-height: min(560px, 70vh);
 }
 
 * { box-sizing: border-box; }
@@ -182,10 +183,20 @@ button, input, select { font: inherit; }
 
 .canvas-box {
   position: relative;
+  width: 100%;
+  display: grid;
+  place-items: center;
   overflow: hidden;
   background: #eeeeee;
 }
-.canvas-box canvas { display: block; width: 100%; height: auto; }
+.canvas-box canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: var(--canvas-viewer-max-height);
+  image-rendering: pixelated;
+}
 
 .note, .instruction {
   margin-top: 12px;
