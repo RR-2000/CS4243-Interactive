@@ -335,6 +335,45 @@ button, input, select { font: inherit; }
 .orientation-gradient { height: 10px; border-radius: 2px; background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
 .orientation-labels { display: flex; justify-content: space-between; margin-top: 6px; color: var(--muted); font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
 
+.gabor-controls .control { min-width: 170px; }
+.gabor-controls .button { flex: 0 0 auto; margin-bottom: 1px; }
+.gabor-intro { display: grid; grid-template-columns: minmax(260px, .7fr) minmax(460px, 1.8fr); gap: 12px; margin-bottom: 16px; }
+.gabor-kernel-card { align-self: stretch; }
+.gabor-kernel-box { min-height: 270px; background: #d8d8d8; }
+.gabor-kernel-box canvas { width: min(230px, 86%); height: auto; max-height: 230px; border: 1px solid #c4c4c4; }
+.gabor-axis { position: absolute; left: 50%; top: 50%; width: min(205px, 76%); height: 0; border-top: 1px solid rgba(37,99,235,.78); transform-origin: center; pointer-events: none; }
+.gabor-axis::after { content: ''; position: absolute; right: -1px; top: -4px; width: 7px; height: 7px; border-top: 1px solid var(--accent); border-right: 1px solid var(--accent); transform: rotate(45deg); }
+.gabor-formula { display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 24px 28px; border: 1px solid var(--border); background: var(--surface); }
+.gabor-kicker { margin-bottom: 16px; color: var(--accent); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.gabor-equation { overflow-x: auto; padding: 4px 0 13px; color: #222; font: 18px/1.7 Georgia, 'Times New Roman', serif; white-space: nowrap; }
+.gabor-equation sub { font-size: .65em; }
+.fraction { display: inline-grid; grid-template-rows: auto auto; margin: 0 3px; text-align: center; vertical-align: middle; }
+.fraction > span:first-child { padding: 0 4px 1px; border-bottom: 1px solid currentColor; }
+.fraction > span:last-child { padding: 1px 4px 0; }
+.gabor-formula p { max-width: 720px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.gabor-legend { display: flex; gap: 16px; margin-top: 17px; padding-top: 13px; border-top: 1px solid #ededed; color: var(--muted); font-size: 9px; }
+.gabor-legend span { display: flex; align-items: center; gap: 5px; }
+.gabor-swatch { width: 12px; height: 12px; display: inline-block; border: 1px solid #aaa; }
+.gabor-swatch.dark { background: #171717; }
+.gabor-swatch.mid { background: #808080; }
+.gabor-swatch.light { background: #efefef; }
+.gabor-section-title { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 0 0 9px; }
+.gabor-section-title > div { display: grid; gap: 3px; }
+.gabor-section-title b { font-size: 12px; }
+.gabor-section-title small, .gabor-section-title > span { color: var(--muted); font-size: 9px; }
+.gabor-section-title > span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.gabor-texture-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.gabor-texture-card figcaption small { max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gabor-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--border); }
+.gabor-pair > div { min-width: 0; padding: 7px; background: #f3f3f3; }
+.gabor-image-label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.gabor-pair canvas { width: 100%; height: auto; display: block; aspect-ratio: 1; background: #808080; image-rendering: auto; }
+.gabor-strength { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 9px; }
+.gabor-strength b { color: var(--accent); font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.gabor-source-note { margin-top: 10px; color: var(--muted); font-size: 9px; line-height: 1.45; }
+.gabor-source-note a { color: var(--accent); text-decoration: none; }
+.gabor-source-note a:hover { text-decoration: underline; }
+
 .flow-grid { display: grid; gap: 12px; }
 .flow-top-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .flow-bottom-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -372,6 +411,8 @@ button, input, select { font: inherit; }
   .drop-zone { left: 76px; }
   .results.three, .hist-layout, .template-layout { grid-template-columns: 1fr; }
   .flow-bottom-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gabor-intro { grid-template-columns: 1fr; }
+  .gabor-texture-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .matrix-workspace { grid-template-columns: 1fr 1fr; }
   .output-section { grid-column: 1 / -1; }
   .experiment-header p { display: none; }
@@ -392,6 +433,10 @@ button, input, select { font: inherit; }
   .content { padding: 14px; }
   .results, .results.four { grid-template-columns: 1fr; }
   .effect-histograms, .matrix-workspace, .flow-top-grid, .flow-bottom-grid { grid-template-columns: 1fr; }
+  .gabor-texture-grid { grid-template-columns: 1fr; }
+  .gabor-formula { padding: 18px; }
+  .gabor-equation { font-size: 15px; }
+  .gabor-section-title { align-items: start; }
   .output-section { grid-column: auto; }
   .drop-zone { inset: 10px 10px 64px; }
 }
