@@ -1,4 +1,4 @@
-import {createLecture4Experiments} from './lecture4.js';
+import {createLecture4Experiments} from './lecture4.js?v=18';
 
 (()=>{
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -61,8 +61,8 @@ const experiments=[
   id:'gabor',
   icon:'≈',
   title:'Gabor filter bank (L4)',
-  description:'Tune one Gabor kernel and compare its signed response across six contrasting textures.',
-  state:{gamma:.6,sigma:4,omega:0,lambda:10},
+  description:'Tune one complex Gabor kernel and compare its phase-invariant power response across five contrasting textures.',
+  state:{gamma:1,sigma:4,omega:0,lambda:10},
   mount(){mountGabor(this)},
   destroy(){destroyGabor()}
 },
@@ -80,25 +80,24 @@ const experiments=[
 ];
 
 const GABOR_TEXTURE_SIZE=144;
-const GABOR_PHASE=Math.PI/2;
+const GABOR_KERNEL_VIEW_RADIUS=40;
 const GABOR_TEXTURES=[
   {name:'Brick',detail:'regular horizontal and vertical structure',url:'images/gabor/brick.png',source:'scikit-image · CC0'},
   {name:'Grass',detail:'fine, fibrous and weakly oriented',url:'images/gabor/grass.png',source:'scikit-image · CC0'},
-  {name:'Knit',detail:'interlocking loops with a distinct woven structure',url:'images/lecture4/knit.webp',source:'generated course asset'},
-  {name:'Gravel',detail:'coarse and approximately isotropic',url:'images/gabor/gravel.png',source:'scikit-image · CC0'},
+  {name:'Knit',detail:'interlocking blue yarn loops',url:'images/lecture4/knit.png',source:'course attachment'},
   {name:'Zebra',detail:'strong curved stripe pattern',url:'images/Plains_Zebra_Equus_quagga_cropped.jpg',source:'course image'},
   {name:'Corridor',detail:'repeated lines and perspective',url:'images/Corridor_crop.png',source:'course image'}
 ];
-const gaborRuntime={token:0,raf:0,textures:null,loading:null};
+const gaborRuntime={token:0,raf:0,textures:null,loading:null,displayMax:null};
 
 function gaborTextureCard(texture,index){
   return `<figure class="card gabor-texture-card">
     <figcaption><span>${texture.name}</span><small>${texture.detail}</small></figcaption>
     <div class="gabor-pair">
       <div><span class="gabor-image-label">Texture</span><canvas id="gaborTexture${index}" aria-label="${texture.name} texture"></canvas></div>
-      <div><span class="gabor-image-label">Signed response</span><canvas id="gaborResponse${index}" aria-label="${texture.name} Gabor response"></canvas></div>
+      <div><span class="gabor-image-label">Gabor power</span><canvas id="gaborResponse${index}" aria-label="${texture.name} Gabor power response"></canvas></div>
     </div>
-    <div class="gabor-strength"><span>Mean |response|</span><b id="gaborStrength${index}">—</b></div>
+    <div class="gabor-strength"><span>Mean power</span><b id="gaborStrength${index}">—</b></div>
   </figure>`;
 }
 
@@ -106,7 +105,7 @@ function mountGabor(experiment){
   destroyGabor();
   const token=gaborRuntime.token,s=experiment.state;
   root.innerHTML=`<div class="controls gabor-controls">
-    ${controlRange('gaborGamma','γ · aspect ratio',.4,1.6,s.gamma,.05)}
+    ${controlRange('gaborGamma','γ · envelope aspect ratio',.5,1.5,s.gamma,.05)}
     ${controlRange('gaborSigma','σ · envelope scale',1,8,s.sigma,.25)}
     ${controlRange('gaborOmega','ω · orientation',0,175,s.omega,5)}
     ${controlRange('gaborLambda','λ · wavelength',3,30,s.lambda,.5)}
@@ -116,25 +115,25 @@ function mountGabor(experiment){
     <span>Prepared settings</span>
     <button data-gabor-preset="orientation" type="button">Rotate to 90°</button>
     <button data-gabor-preset="wavelength" type="button">Coarser wavelength</button>
-    <button data-gabor-preset="envelope" type="button">Broader envelope</button>
+    <button data-gabor-preset="envelope" type="button">Taller envelope</button>
   </div>
   <div class="gabor-intro">
     <figure class="card gabor-kernel-card">
-      <figcaption><span>Selected Gabor filter</span><small id="gaborKernelMeta">—</small></figcaption>
+      <figcaption><span>Selected real kernel component</span><small id="gaborKernelMeta">—</small></figcaption>
       <div class="canvas-box gabor-kernel-box"><canvas id="gaborKernel" aria-label="Selected Gabor kernel"></canvas><span class="gabor-axis" id="gaborAxis" aria-hidden="true"></span></div>
     </figure>
     <section class="gabor-formula" aria-label="Gabor filter definition">
       <span class="gabor-kicker">One member of the filter bank</span>
-      <div class="gabor-equation"><i>f</i><sub>mn</sub> = <span class="fraction"><span>1</span><span>2πσ²</span></span> exp[−<span class="fraction"><span>m² + γ²n²</span><span>2σ²</span></span>] sin[<span class="fraction"><span>2π(cos(ω)m + sin(ω)n)</span><span>λ</span></span> + φ]</div>
-      <p>The Gaussian envelope localizes a sinusoid. Change <b>ω</b> to turn its preferred direction and <b>λ</b> to select a spatial scale. The phase shift is fixed at <b>φ = π/2</b>, placing a response peak at the kernel center.</p>
+      <div class="gabor-equation"><i>g</i><sub>mn</sub> = <span class="fraction"><span>γ</span><span>2πσ²</span></span> exp[−<span class="fraction"><span>m² + γ²n²</span><span>2σ²</span></span>] exp[<i>i</i> <span class="fraction"><span>2π(cos(ω)m + sin(ω)n)</span><span>λ</span></span>]</div>
+      <p>At <b>γ = 1</b> this is the supplied Python reference with σ<sub>x</sub> = σ<sub>y</sub>. Other γ values extend it by stretching or compressing the envelope along the image’s vertical axis. Images are standardized, convolution wraps at the boundary, and the displayed power is <b>√(real² + imaginary²)</b>.</p>
       <div class="gabor-legend"><span><i class="gabor-swatch dark"></i>negative</span><span><i class="gabor-swatch mid"></i>zero</span><span><i class="gabor-swatch light"></i>positive</span></div>
     </section>
   </div>
-  <div class="gabor-section-title"><div><b>Texture responses</b><small>All six response images share one display scale, so contrast is comparable.</small></div><span id="gaborStatus" role="status">Loading texture bank…</span></div>
+  <div class="gabor-section-title"><div><b>Texture responses</b><small>All five power images use one fixed display scale, so contrast remains comparable as parameters change.</small></div><span id="gaborStatus" role="status">Loading texture bank…</span></div>
   <div class="gabor-texture-grid">${GABOR_TEXTURES.map(gaborTextureCard).join('')}</div>
   <div class="gabor-section-title gabor-prepared-title"><div><b>Prepared parameter comparisons</b><small>The brick texture stays fixed; only the named parameter changes within each pair.</small></div></div>
   <div class="l4-comparison gabor-prepared" id="gaborPrepared"></div>
-  <div class="gabor-source-note">Brick, grass, and gravel are CC0 samples distributed by <a href="https://scikit-image.org/docs/stable/auto_examples/features_detection/plot_gabor.html" target="_blank" rel="noopener noreferrer">scikit-image’s Gabor filter-bank example</a>. Knit is a generated course asset; zebra and corridor are existing course images in this project.</div>`;
+  <div class="gabor-source-note">Brick and grass are CC0 samples distributed by <a href="https://scikit-image.org/docs/stable/auto_examples/features_detection/plot_gabor.html" target="_blank" rel="noopener noreferrer">scikit-image’s Gabor filter-bank example</a>. Knit uses the supplied course attachment; zebra and corridor are existing course images in this project.</div>`;
 
   const clearPreset=()=>$$('.gabor-presets button').forEach(item=>item.classList.remove('active'));
   bindRange('gaborGamma',value=>{s.gamma=value;clearPreset();scheduleGaborRender(experiment,token)},value=>(+value).toFixed(2));
@@ -147,13 +146,13 @@ function mountGabor(experiment){
   $('#gaborSigmaOut').textContent=s.sigma.toFixed(2);
   $('.gabor-presets').onclick=event=>{
     const button=event.target.closest('button');if(!button)return;
-    const presets={orientation:{gamma:.7,sigma:4,omega:90,lambda:10},wavelength:{gamma:.7,sigma:4,omega:0,lambda:18},envelope:{gamma:.7,sigma:6,omega:0,lambda:10}};
+    const presets={orientation:{gamma:1,sigma:4,omega:90,lambda:10},wavelength:{gamma:1,sigma:4,omega:0,lambda:18},envelope:{gamma:.55,sigma:4,omega:0,lambda:10}};
     Object.assign(s,presets[button.dataset.gaborPreset]);
     [['gaborGamma','gamma',value=>(+value).toFixed(2)],['gaborSigma','sigma',value=>(+value).toFixed(2)],['gaborOmega','omega',value=>`${value}°`],['gaborLambda','lambda',value=>`${(+value).toFixed(1)} px`]].forEach(([id,key,format])=>{const input=$('#'+id);input.value=s[key];$('#'+id+'Out').textContent=format(s[key])});
     $$('.gabor-presets button').forEach(item=>item.classList.toggle('active',item===button));
     renderGabor(experiment);
   };
-  $('#gaborReset').onclick=()=>{experiment.state={gamma:.6,sigma:4,omega:0,lambda:10};experiment.mount();renderParameterGuide('gabor');renderPseudocode('gabor')};
+  $('#gaborReset').onclick=()=>{experiment.state={gamma:1,sigma:4,omega:0,lambda:10};experiment.mount();renderParameterGuide('gabor');renderPseudocode('gabor')};
 
   loadGaborTextures().then(()=>{
     if(token!==gaborRuntime.token||state.active!=='gabor')return;
@@ -180,8 +179,10 @@ function loadGaborTexture(definition){
       const surface=document.createElement('canvas');surface.width=size;surface.height=size;
       const context=surface.getContext('2d',{willReadFrequently:true});
       context.drawImage(image,sx,sy,source,source,0,0,size,size);
-      const pixels=context.getImageData(0,0,size,size).data,data=new Float32Array(size*size);
-      for(let i=0,p=0;i<pixels.length;i+=4,p++)data[p]=.299*pixels[i]+.587*pixels[i+1]+.114*pixels[i+2];
+      const pixels=context.getImageData(0,0,size,size).data,data=new Float32Array(size*size);let sum=0,sumSquares=0;
+      for(let i=0,p=0;i<pixels.length;i+=4,p++){const value=.299*pixels[i]+.587*pixels[i+1]+.114*pixels[i+2];data[p]=value;sum+=value;sumSquares+=value*value}
+      const mean=sum/data.length,standardDeviation=Math.sqrt(Math.max(0,sumSquares/data.length-mean*mean))||1;
+      for(let i=0;i<data.length;i++)data[i]=(data[i]-mean)/standardDeviation;
       resolve({...definition,canvas:surface,data,w:size,h:size});
     };
     image.onerror=()=>reject(new Error(`Could not load ${definition.url}`));
@@ -191,15 +192,18 @@ function loadGaborTexture(definition){
 
 function loadGaborTextures(){
   if(gaborRuntime.textures)return Promise.resolve(gaborRuntime.textures);
-  if(!gaborRuntime.loading)gaborRuntime.loading=Promise.all(GABOR_TEXTURES.map(loadGaborTexture)).then(textures=>gaborRuntime.textures=textures);
+  if(!gaborRuntime.loading)gaborRuntime.loading=Promise.all(GABOR_TEXTURES.map(loadGaborTexture)).then(textures=>{
+    gaborRuntime.textures=textures;
+    gaborRuntime.displayMax=calibrateGaborPowerScale(textures);
+    return textures;
+  });
   return gaborRuntime.loading;
 }
 
-function makeGaborKernel({gamma,sigma,omega,lambda}){
+function makeGaborKernel({gamma=1,sigma,omega,lambda}){
   const theta=omega*Math.PI/180,kx=2*Math.PI*Math.cos(theta)/lambda,ky=2*Math.PI*Math.sin(theta)/lambda;
-  const radius=Math.ceil(3*sigma/Math.min(1,gamma)),size=radius*2+1,norm=1/(2*Math.PI*sigma*sigma);
-  const phaseSin=Math.sin(GABOR_PHASE),phaseCos=Math.cos(GABOR_PHASE);
-  const xSin=new Float32Array(size),xCos=new Float32Array(size),ySin=new Float32Array(size),yCos=new Float32Array(size),values=new Float32Array(size*size);
+  const circular=Math.abs(gamma-1)<1e-8,radius=circular?Math.ceil(Math.max(Math.abs(3*sigma*Math.cos(theta)),Math.abs(3*sigma*Math.sin(theta)),1)):Math.ceil(3*sigma/Math.min(1,gamma)),size=radius*2+1,norm=gamma/(2*Math.PI*sigma*sigma);
+  const xSin=new Float32Array(size),xCos=new Float32Array(size),ySin=new Float32Array(size),yCos=new Float32Array(size),realValues=new Float32Array(size*size),imaginaryValues=new Float32Array(size*size);
   for(let i=-radius;i<=radius;i++){
     const gx=Math.exp(-(i*i)/(2*sigma*sigma)),gy=Math.exp(-(gamma*gamma*i*i)/(2*sigma*sigma)),index=i+radius;
     xSin[index]=norm*gx*Math.sin(kx*i);xCos[index]=norm*gx*Math.cos(kx*i);
@@ -207,29 +211,37 @@ function makeGaborKernel({gamma,sigma,omega,lambda}){
   }
   for(let y=-radius;y<=radius;y++)for(let x=-radius;x<=radius;x++){
     const xi=x+radius,yi=y+radius,sine=xSin[xi]*yCos[yi]+xCos[xi]*ySin[yi],cosine=xCos[xi]*yCos[yi]-xSin[xi]*ySin[yi];
-    values[yi*size+xi]=sine*phaseCos+cosine*phaseSin;
+    realValues[yi*size+xi]=cosine;imaginaryValues[yi*size+xi]=sine;
   }
-  return{radius,size,xSin,xCos,ySin,yCos,values,phaseSin,phaseCos};
+  return{radius,size,xSin,xCos,ySin,yCos,values:realValues,imaginaryValues};
 }
 
 function correlateSeparable(data,w,h,horizontal,vertical){
   const radius=(horizontal.length-1)/2,temp=new Float32Array(w*h),out=new Float32Array(w*h);
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){
-    let sum=0;for(let k=-radius;k<=radius;k++)sum+=data[y*w+clamp(x+k,0,w-1)]*horizontal[k+radius];temp[y*w+x]=sum;
+    let sum=0;for(let k=-radius;k<=radius;k++)sum+=data[y*w+(x+k+w)%w]*horizontal[k+radius];temp[y*w+x]=sum;
   }
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){
-    let sum=0;for(let k=-radius;k<=radius;k++)sum+=temp[clamp(y+k,0,h-1)*w+x]*vertical[k+radius];out[y*w+x]=sum;
+    let sum=0;for(let k=-radius;k<=radius;k++)sum+=temp[((y+k+h)%h)*w+x]*vertical[k+radius];out[y*w+x]=sum;
   }
   return out;
 }
 
 function gaborResponse(texture,kernel){
-  const useSine=Math.abs(kernel.phaseCos)>1e-8,useCosine=Math.abs(kernel.phaseSin)>1e-8;
-  const sineA=useSine?correlateSeparable(texture.data,texture.w,texture.h,kernel.xSin,kernel.yCos):null,sineB=useSine?correlateSeparable(texture.data,texture.w,texture.h,kernel.xCos,kernel.ySin):null;
-  const cosineA=useCosine?correlateSeparable(texture.data,texture.w,texture.h,kernel.xCos,kernel.yCos):null,cosineB=useCosine?correlateSeparable(texture.data,texture.w,texture.h,kernel.xSin,kernel.ySin):null,out=new Float32Array(texture.data.length);
-  let absoluteSum=0,maxAbs=0;
-  for(let i=0;i<out.length;i++){const value=(useSine?(sineA[i]+sineB[i])*kernel.phaseCos:0)+(useCosine?(cosineA[i]-cosineB[i])*kernel.phaseSin:0);out[i]=value;const magnitude=Math.abs(value);absoluteSum+=magnitude;maxAbs=Math.max(maxAbs,magnitude)}
-  return{values:out,meanAbs:absoluteSum/out.length,maxAbs};
+  const sineA=correlateSeparable(texture.data,texture.w,texture.h,kernel.xSin,kernel.yCos),sineB=correlateSeparable(texture.data,texture.w,texture.h,kernel.xCos,kernel.ySin),cosineA=correlateSeparable(texture.data,texture.w,texture.h,kernel.xCos,kernel.yCos),cosineB=correlateSeparable(texture.data,texture.w,texture.h,kernel.xSin,kernel.ySin),out=new Float32Array(texture.data.length);
+  let sum=0,maxPower=0;
+  for(let i=0;i<out.length;i++){const real=cosineA[i]-cosineB[i],imaginary=sineA[i]+sineB[i],power=Math.hypot(real,imaginary);out[i]=power;sum+=power;maxPower=Math.max(maxPower,power)}
+  return{values:out,meanPower:sum/out.length,maxPower};
+}
+
+function calibrateGaborPowerScale(textures){
+  const settings=[
+    {gamma:1,sigma:1,omega:0,lambda:3},{gamma:1,sigma:4,omega:0,lambda:10},{gamma:1,sigma:4,omega:0,lambda:30},
+    {gamma:1,sigma:4,omega:45,lambda:10},{gamma:1,sigma:4,omega:90,lambda:10},{gamma:1,sigma:8,omega:135,lambda:10},
+    {gamma:.5,sigma:4,omega:0,lambda:10},{gamma:1.5,sigma:4,omega:90,lambda:10},
+  ],samples=[];
+  settings.forEach(setting=>textures.forEach(texture=>{const response=gaborResponse(texture,makeGaborKernel(setting));for(let i=0;i<response.values.length;i+=29)samples.push(response.values[i])}));
+  samples.sort((a,b)=>a-b);return samples[Math.floor(samples.length*.997)]||1;
 }
 
 function drawSignedValues(canvas,values,w,h,maxAbs){
@@ -239,10 +251,15 @@ function drawSignedValues(canvas,values,w,h,maxAbs){
   canvas.getContext('2d').putImageData(image,0,0);
 }
 
-function drawGaborKernel(kernel,omega){
-  const canvas=$('#gaborKernel'),maxAbs=Math.max(...kernel.values.map(Math.abs));
-  drawSignedValues(canvas,kernel.values,kernel.size,kernel.size,maxAbs);
-  $('#gaborKernelMeta').textContent=`${kernel.size} × ${kernel.size} · φ = π/2`;
+function drawGaborKernel(kernel,{gamma,sigma,omega,lambda}){
+  const canvas=$('#gaborKernel'),viewSize=GABOR_KERNEL_VIEW_RADIUS*2+1,view=new Float32Array(viewSize*viewSize),theta=omega*Math.PI/180,kx=2*Math.PI*Math.cos(theta)/lambda,ky=2*Math.PI*Math.sin(theta)/lambda,norm=gamma/(2*Math.PI*sigma*sigma);
+  let maxAbs=0;
+  for(let y=-GABOR_KERNEL_VIEW_RADIUS;y<=GABOR_KERNEL_VIEW_RADIUS;y++)for(let x=-GABOR_KERNEL_VIEW_RADIUS;x<=GABOR_KERNEL_VIEW_RADIUS;x++){
+    const envelope=Math.exp(-(x*x+gamma*gamma*y*y)/(2*sigma*sigma)),value=norm*envelope*Math.cos(kx*x+ky*y),index=(y+GABOR_KERNEL_VIEW_RADIUS)*viewSize+x+GABOR_KERNEL_VIEW_RADIUS;
+    view[index]=value;maxAbs=Math.max(maxAbs,Math.abs(value));
+  }
+  drawSignedValues(canvas,view,viewSize,viewSize,maxAbs);
+  $('#gaborKernelMeta').textContent=`${kernel.size} × ${kernel.size} support · fixed ±${GABOR_KERNEL_VIEW_RADIUS} px view`;
   $('#gaborAxis').style.transform=`translate(-50%, -50%) rotate(${omega}deg)`;
 }
 
@@ -256,28 +273,35 @@ function scheduleGaborRender(experiment,token){
 
 function renderGabor(experiment){
   const started=performance.now(),kernel=makeGaborKernel(experiment.state),textures=gaborRuntime.textures;
-  drawGaborKernel(kernel,experiment.state.omega);
-  const responses=textures.map(texture=>gaborResponse(texture,kernel)),globalMax=Math.max(...responses.map(response=>response.maxAbs),1e-9);
+  drawGaborKernel(kernel,experiment.state);
+  const responses=textures.map(texture=>gaborResponse(texture,kernel)),displayMax=gaborRuntime.displayMax;
   textures.forEach((texture,index)=>{
     const source=$(`#gaborTexture${index}`);source.width=texture.w;source.height=texture.h;source.getContext('2d').drawImage(texture.canvas,0,0);
-    drawSignedValues($(`#gaborResponse${index}`),responses[index].values,texture.w,texture.h,globalMax);
-    $(`#gaborStrength${index}`).textContent=responses[index].meanAbs.toFixed(3);
+    drawPowerValues($(`#gaborResponse${index}`),responses[index].values,texture.w,texture.h,displayMax);
+    $(`#gaborStrength${index}`).textContent=responses[index].meanPower.toFixed(3);
   });
-  $('#gaborStatus').textContent=`Updated ${textures.length} textures in ${Math.round(performance.now()-started)} ms`;
+  $('#gaborStatus').textContent=`Fixed power range 0–${displayMax.toFixed(2)} · updated in ${Math.round(performance.now()-started)} ms`;
   state.output=$('#gaborResponse0');
+}
+
+function drawPowerValues(canvas,values,w,h,maxPower){
+  canvas.width=w;canvas.height=h;const image=new ImageData(w,h),scale=255/(maxPower||1);
+  for(let i=0;i<values.length;i++){const value=clamp(values[i]*scale);image.data[i*4]=image.data[i*4+1]=image.data[i*4+2]=value;image.data[i*4+3]=255}
+  canvas.getContext('2d').putImageData(image,0,0);
 }
 
 function renderPreparedGaborComparisons(texture){
   const definitions=[
-    {title:'Orientation',caption:'same scale, different preferred direction',a:{gamma:.7,sigma:4,omega:0,lambda:10},b:{gamma:.7,sigma:4,omega:90,lambda:10},labels:['ω = 0°','ω = 90°']},
-    {title:'Wavelength',caption:'short λ detects finer cycles',a:{gamma:.7,sigma:4,omega:0,lambda:6},b:{gamma:.7,sigma:4,omega:0,lambda:18},labels:['λ = 6 px','λ = 18 px']},
-    {title:'Envelope',caption:'larger σ pools evidence over a wider area',a:{gamma:.7,sigma:2.5,omega:0,lambda:10},b:{gamma:.7,sigma:6,omega:0,lambda:10},labels:['σ = 2.5','σ = 6.0']},
+    {title:'Orientation',caption:'same envelope and wavelength, rotated carrier',a:{gamma:1,sigma:4,omega:0,lambda:10},b:{gamma:1,sigma:4,omega:90,lambda:10},labels:['ω = 0°','ω = 90°']},
+    {title:'Wavelength',caption:'short λ detects finer cycles',a:{gamma:1,sigma:4,omega:0,lambda:6},b:{gamma:1,sigma:4,omega:0,lambda:18},labels:['λ = 6 px','λ = 18 px']},
+    {title:'Envelope scale',caption:'larger σ pools over a wider neighborhood',a:{gamma:1,sigma:2.5,omega:0,lambda:10},b:{gamma:1,sigma:6,omega:0,lambda:10},labels:['σ = 2.5','σ = 6.0']},
+    {title:'Aspect ratio',caption:'smaller γ stretches the envelope vertically',a:{gamma:.55,sigma:4,omega:0,lambda:10},b:{gamma:1.35,sigma:4,omega:0,lambda:10},labels:['γ = 0.55','γ = 1.35']},
   ];
   const container=$('#gaborPrepared');
   container.innerHTML=definitions.map((item,index)=>`<figure><figcaption><b>${item.title}</b><small>${item.caption}</small></figcaption><div><span><canvas id="gaborCompare${index}a"></canvas><em>${item.labels[0]}</em></span><span><canvas id="gaborCompare${index}b"></canvas><em>${item.labels[1]}</em></span></div></figure>`).join('');
   definitions.forEach((item,index)=>{
-    const responses=['a','b'].map(side=>gaborResponse(texture,makeGaborKernel(item[side]))),pairMax=Math.max(...responses.map(response=>response.maxAbs),1e-9);
-    responses.forEach((response,side)=>drawSignedValues($(`#gaborCompare${index}${side?'b':'a'}`),response.values,texture.w,texture.h,pairMax));
+    const responses=['a','b'].map(side=>gaborResponse(texture,makeGaborKernel(item[side])));
+    responses.forEach((response,side)=>drawPowerValues($(`#gaborCompare${index}${side?'b':'a'}`),response.values,texture.w,texture.h,gaborRuntime.displayMax));
   });
 }
 
@@ -1563,17 +1587,16 @@ def match_template(image, template):
     return cross_correlation, normalized_zero_mean`,
 
   gabor:`import numpy as np
-from scipy import signal
+from scipy import ndimage as ndi
+from skimage.filters import gabor_kernel
 
-def gabor_response(image, gamma=0.6, sigma=4, omega=0,
-                   wavelength=10, phase=np.pi/2):
-    radius = int(np.ceil(3 * sigma / min(1, gamma)))
-    m, n = np.meshgrid(np.arange(-radius, radius + 1),
-                       np.arange(-radius, radius + 1))
-    envelope = np.exp(-(m*m + gamma*gamma*n*n) / (2*sigma*sigma))
-    sinusoid = np.sin(2*np.pi*(np.cos(omega)*m + np.sin(omega)*n) / wavelength + phase)
-    kernel = envelope * sinusoid / (2*np.pi*sigma*sigma)
-    return kernel, signal.correlate2d(image, kernel, mode="same", boundary="symm")`,
+def gabor_power(image, theta=0, sigma=4, wavelength=10):
+    image = (image - image.mean()) / image.std()
+    kernel = gabor_kernel(1 / wavelength, theta=theta,
+                          sigma_x=sigma, sigma_y=sigma)
+    real = ndi.convolve(image, np.real(kernel), mode="wrap")
+    imaginary = ndi.convolve(image, np.imag(kernel), mode="wrap")
+    return kernel, np.sqrt(real**2 + imaginary**2)`,
 
   opticalFlow:`import cv2
 import numpy as np
@@ -1651,7 +1674,7 @@ function guideFor(id){
   if(id==='canny')return{overview:'All four controls participate in the Canny pipeline.',params:[param('NMS radius',s.nms,'Number of pixels compared in both directions along the gradient when retaining local maxima.'),param('Low threshold',s.low,'Weak-edge cutoff. These pixels survive only when connected to a strong edge.'),param('High threshold',s.high,'Strong-edge seed cutoff. It is kept above the low threshold.'),param('Blur sigma',s.sigma,'Gaussian smoothing applied before gradients; larger values suppress more noise and fine detail.')],links:[link('Canny edge detector',WIKI.canny),link('Non-maximum suppression',WIKI.nms),link('Gaussian blur',WIKI.gaussian)]};
   if(id==='hough')return{overview:'All three sliders affect either the edge candidates, accumulator peaks, or rendered lines. Only the accumulator visual is remapped with nearest-neighbor sampling to match the input image aspect ratio.',params:[param('Edge threshold',s.edgeThreshold,'Minimum Sobel magnitude required for a pixel to vote.'),param('Peak threshold',`${s.voteThreshold}%`,'Minimum accumulator value as a percentage of the strongest vote.'),param('Maximum lines',s.lines,'Caps the number of separated accumulator peaks drawn on the image.'),param('Accumulator display','Input aspect ratio','Changes only the displayed Hough-space shape; the underlying θ–ρ votes and detected peaks are unchanged.')],links:[link('Hough transform',WIKI.hough)]};
   if(id==='template')return{overview:'There are no sliders. The dragged rectangle is the tunable input: its position and dimensions define the template patch.',params:[param('Patch',s.rect?`${Math.round(s.rect.w)} × ${Math.round(s.rect.h)}`:'Not selected','The selected pixels are compared at every valid source position using CC and zero-mean normalized CC.',Boolean(s.rect))],links:[link('Template matching',WIKI.template),link('Cross-correlation',WIKI.correlation)]};
-  if(id==='gabor')return{overview:'The selected parameters define one member of a Gabor filter bank. The same kernel is correlated with every texture, and all signed responses use one shared display scale.',params:[param('Gamma',s.gamma.toFixed(2),'Aspect ratio of the Gaussian envelope. Gamma = 1 is circular; smaller values stretch the envelope vertically.'),param('Sigma',s.sigma.toFixed(2),'Controls the Gaussian decay and therefore the spatial extent of the kernel.'),param('Omega',`${s.omega}°`,'Rotates the sinusoid and changes the preferred orientation of the detected texture feature.'),param('Lambda',`${s.lambda.toFixed(1)} px`,'Sets the sinusoid wavelength. Shorter wavelengths respond to finer texture cycles.'),param('Phi','π/2','The phase shift is fixed at a cosine peak so the filter is centered, and it intentionally has no slider.')],links:[link('Gabor filter',WIKI.gabor),link('Gabor filter banks for texture classification',WIKI.gaborBank)]};
+  if(id==='gabor')return{overview:'The selected parameters define one complex member of a Gabor filter bank. Each grayscale texture is standardized, convolved with the raw real and imaginary kernel components using wrap boundaries, and shown as phase-invariant power. Response maps share one fixed display range, and the kernel preview uses one fixed spatial frame.',params:[param('Gamma',s.gamma.toFixed(2),'Controls the vertical aspect ratio of the Gaussian envelope. Gamma = 1 matches the circular envelope in the supplied Python reference; smaller values stretch it vertically.'),param('Sigma',s.sigma.toFixed(2),'Controls the Gaussian decay and therefore the spatial extent of the kernel.'),param('Omega',`${s.omega}°`,'Maps to theta in gabor_kernel and changes the preferred orientation of the sinusoidal carrier without changing the preview scale.'),param('Lambda',`${s.lambda.toFixed(1)} px`,'Sets frequency to 1 / lambda. Shorter wavelengths respond to finer texture cycles.'),param('Power','√(real² + imaginary²)','Combines the quadrature responses so the displayed magnitude does not depend on local phase.'),param('Display scales','Fixed','The response brightness range and the kernel preview’s pixel field are constant as parameters change.')],links:[link('Gabor filter',WIKI.gabor),link('Gabor filter banks for texture classification',WIKI.gaborBank)]};
   if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants. Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',s.pyramidLevels,'Adds coarser resolutions before the full-resolution refinement. The display shows one more resolution than the number of downsampling steps.'),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
   return null;
 }
