@@ -1,4 +1,5 @@
 import {createLecture4Experiments} from './lecture4.js?v=18';
+import {createNmsExperiment,nmsGuide,NMS_PYTHON_SAMPLE} from './nms.js?v=1';
 
 (()=>{
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -67,6 +68,17 @@ const experiments=[
   destroy(){destroyGabor()}
 },
 ...createLecture4Experiments(root),
+{
+  group:'Local features',
+  id:'harris',
+  icon:'┌',
+  title:'Harris corner detector (L7)',
+  description:'Compute gradients, build the second-moment matrix M in every window, threshold the cornerness R, then keep local maxima.',
+  state:{sigma:1.5,k:.05,threshold:1,nms:4,rotation:30,scale:100,contrast:100,probe:null},
+  mount(){mountHarris(this)},
+  destroy(){destroyHarris()}
+},
+createNmsExperiment(root),
 {
   group:'Motion',
   id:'opticalFlow',
@@ -557,6 +569,360 @@ function animateOpticalFlow(timestamp,token){
   drawOriginalFlowFrame(progress);
   if(flowRuntime.ready){drawFlowPanel('flowSingle',flowRuntime.single,false,progress);drawFlowPanel('flowMulti',flowRuntime.multi,true,progress)}
   flowRuntime.raf=requestAnimationFrame(next=>animateOpticalFlow(next,token));
+}
+
+const HARRIS_WORKING_SIZE=480;
+const HARRIS_MATCH_TOLERANCE=3;
+const HARRIS_DEFAULTS={sigma:1.5,k:.05,threshold:1,nms:4,rotation:30,scale:100,contrast:100,probe:null};
+const HARRIS_VIEW_PRESETS={rotate:{rotation:30,scale:100,contrast:100},contrast:{rotation:0,scale:100,contrast:60},zoom:{rotation:0,scale:60,contrast:100}};
+const HARRIS_CONTROLS=[
+  ['harrisSigma','sigma',value=>(+value).toFixed(2)],
+  ['harrisK','k',value=>(+value).toFixed(3)],
+  ['harrisThreshold','threshold',value=>`${(+value).toFixed(1)}%`],
+  ['harrisNms','nms',value=>`${value} px`],
+  ['harrisRotation','rotation',value=>`${value}°`],
+  ['harrisScale','scale',value=>`${value}%`],
+  ['harrisContrast','contrast',value=>`${value}%`]
+];
+const HARRIS_CORNER_RAMP=[[0,0,0],[150,22,22],[235,64,40],[255,220,80]];
+const HARRIS_EDGE_RAMP=[[0,0,0],[24,52,140],[70,130,255]];
+const HARRIS_REGION_COLORS={corner:[251,225,222],edge:[223,232,251],flat:[244,244,244]};
+const harrisRuntime={token:0,raf:0,view:null,firstKey:'',first:null,secondKey:'',second:null,corners:null};
+
+function mountHarris(experiment){
+  destroyHarris();
+  const token=harrisRuntime.token,s=experiment.state;
+  root.innerHTML=`<div class="controls harris-controls">
+    ${controlRange('harrisSigma','σ · Gaussian window',.5,4,s.sigma,.25)}
+    ${controlRange('harrisK','k · trace weight',.02,.2,s.k,.005)}
+    ${controlRange('harrisThreshold','Threshold · % of max R',.1,10,s.threshold,.1)}
+    ${controlRange('harrisNms','NMS radius',1,10,s.nms)}
+    <button class="button ghost" id="harrisReset" type="button">Reset</button>
+  </div>
+  <div class="results">${card('harrisPre','Pre · input image')}${card('harrisPost','Post · Harris corners (in red)','—')}</div>
+  <div class="gabor-section-title harris-section-title"><div><b>The four steps</b><small>Click any step image to inspect the window at that point; clicks near a red dot snap to that corner.</small></div><span id="harrisStatus" role="status">Computing…</span></div>
+  <div class="results four picker" id="harrisSteps">
+    ${card('harrisGradient','1 · Gradient at each point','hue = direction · brightness = |∇I|')}
+    ${card('harrisResponse','2 · Cornerness R of each window','blue: R < 0 edge · red: R > 0 corner')}
+    ${card('harrisCandidates','3 · R > threshold','—')}
+    ${card('harrisMaxima','4 · Non-maximum suppression','—')}
+  </div>
+  <div class="harris-analysis">
+    <section class="harris-inspector" aria-live="polite">
+      <header><b>Second-moment matrix of the probed window</b><small id="harrisProbeMeta">—</small></header>
+      <div class="harris-matrix-row"><span class="harris-symbol">M =</span><div class="harris-matrix">
+        <span><small>Σ w·Ix²</small><b id="harrisMxx">—</b></span><span><small>Σ w·IxIy</small><b id="harrisMxy">—</b></span>
+        <span><small>Σ w·IxIy</small><b id="harrisMyx">—</b></span><span><small>Σ w·Iy²</small><b id="harrisMyy">—</b></span>
+      </div></div>
+      <dl class="harris-values">
+        <div><dt>λ₁ · larger eigenvalue</dt><dd id="harrisLambda1">—</dd></div>
+        <div><dt>λ₂ · smaller eigenvalue</dt><dd id="harrisLambda2">—</dd></div>
+        <div><dt>det M = λ₁λ₂</dt><dd id="harrisDet">—</dd></div>
+        <div><dt>trace M = λ₁ + λ₂</dt><dd id="harrisTrace">—</dd></div>
+        <div><dt>R = det M − k (trace M)²</dt><dd id="harrisR">—</dd></div>
+        <div><dt>Threshold t</dt><dd id="harrisT">—</dd></div>
+      </dl>
+      <p class="harris-verdict" id="harrisVerdict">—</p>
+    </section>
+    <figure class="card harris-plane">
+      <figcaption><span>Eigenvalues of every window</span><small>√ axes · grey dots = sampled windows</small></figcaption>
+      <canvas id="harrisPlane" aria-label="Eigenvalue plane with corner, edge, and flat regions"></canvas>
+      <div class="harris-plane-legend"><span><i class="corner"></i>corner · R &gt; t</span><span><i class="edge"></i>edge · R &lt; −t</span><span><i class="flat"></i>flat · |R| ≤ t</span><span><i class="probe"></i>probed window</span></div>
+    </figure>
+  </div>
+  <div class="gabor-section-title harris-section-title"><div><b>Found Harris corners on a second view</b><small>The identical detector, including the first view’s absolute threshold t, runs on a rotated, rescaled, or contrast-changed copy.</small></div><span id="harrisRepeatSummary">—</span></div>
+  <div class="controls">
+    ${controlRange('harrisRotation','Rotation',0,180,s.rotation,5)}
+    ${controlRange('harrisScale','Scale',50,150,s.scale,5)}
+    ${controlRange('harrisContrast','Contrast',40,160,s.contrast,5)}
+  </div>
+  <div class="l4-presets gabor-presets" id="harrisPresets" aria-label="Prepared second views">
+    <span>Prepared views</span>
+    <button data-harris-preset="rotate" type="button">Rotate 30°</button>
+    <button data-harris-preset="contrast" type="button">Contrast × 0.6</button>
+    <button data-harris-preset="zoom" type="button">Zoom out to 60%</button>
+  </div>
+  <div class="results">${card('harrisFirstView','View 1 · loaded image','—')}${card('harrisSecondView','View 2 · transformed copy','—')}</div>
+  <div class="stats">
+    <div class="stat"><small>Corners · view 1</small><b id="harrisCountFirst">—</b></div>
+    <div class="stat"><small>Corners · view 2</small><b id="harrisCountSecond">—</b></div>
+    <div class="stat"><small>View-1 corners inside view 2</small><b id="harrisVisible">—</b></div>
+    <div class="stat"><small>Repeated within ${HARRIS_MATCH_TOLERANCE} px</small><b id="harrisRepeated">—</b></div>
+  </div>
+  <div class="note">Filled dots were found in both views; rings were found in only one. R depends only on the eigenvalues of M, so rotating the image moves its corners with it, up to resampling error. Adding a constant brightness changes no derivative, but multiplying contrast by a multiplies R by a⁴, so a fixed threshold drops the weaker corners. The window σ is fixed in pixels, so zooming changes which structures look like corners: Harris is not scale invariant.</div>`;
+
+  const update=()=>scheduleHarrisRender(experiment,token);
+  HARRIS_CONTROLS.forEach(([id,key,format])=>bindRange(id,value=>{s[key]=value;update()},format));
+  syncHarrisControls(s);
+  $('#harrisPresets').onclick=event=>{
+    const button=event.target.closest('button');if(!button)return;
+    Object.assign(s,HARRIS_VIEW_PRESETS[button.dataset.harrisPreset]);
+    syncHarrisControls(s);renderParameterGuide('harris');update();
+  };
+  $('#harrisReset').onclick=()=>{experiment.state={...HARRIS_DEFAULTS};experiment.mount();renderParameterGuide('harris');renderPseudocode('harris')};
+  $('#harrisSteps').addEventListener('click',event=>{
+    const target=event.target.closest('canvas'),view=harrisRuntime.view;if(!target||!view)return;
+    const rect=target.getBoundingClientRect(),snap=Math.max(6,3*s.sigma);
+    let x=clamp(Math.floor((event.clientX-rect.left)/rect.width*view.w),0,view.w-1),y=clamp(Math.floor((event.clientY-rect.top)/rect.height*view.h),0,view.h-1),nearest=null;
+    for(const corner of harrisRuntime.corners??[]){const distance=Math.hypot(corner.x-x,corner.y-y);if(distance<=snap&&(!nearest||distance<nearest.distance))nearest={corner,distance}}
+    if(nearest){x=nearest.corner.x;y=nearest.corner.y}
+    s.probe={x:(x+.5)/view.w,y:(y+.5)/view.h};
+    renderHarris(experiment);
+  });
+  renderHarris(experiment);
+}
+
+function destroyHarris(){
+  harrisRuntime.token++;
+  if(harrisRuntime.raf)cancelAnimationFrame(harrisRuntime.raf);
+  Object.assign(harrisRuntime,{raf:0,view:null,firstKey:'',first:null,secondKey:'',second:null,corners:null});
+}
+
+function syncHarrisControls(s){
+  HARRIS_CONTROLS.forEach(([id,key,format])=>{$('#'+id).value=s[key];$('#'+id+'Out').textContent=format(s[key])});
+}
+
+function scheduleHarrisRender(experiment,token){
+  if(harrisRuntime.raf)cancelAnimationFrame(harrisRuntime.raf);
+  harrisRuntime.raf=requestAnimationFrame(()=>{
+    harrisRuntime.raf=0;
+    if(token===harrisRuntime.token&&state.active==='harris')renderHarris(experiment);
+  });
+}
+
+function prepareHarrisView(){
+  const g=workingGray(HARRIS_WORKING_SIZE),gray=new Float32Array(g.data.length);
+  for(let i=0;i<gray.length;i++)gray[i]=g.data[i]/255;
+  return{canvas:g.canvas,gray,w:g.w,h:g.h};
+}
+
+// Steps 1-2 on intensities in [0, 1]: Sobel gradients, the Gaussian-weighted sums that form
+// M = [[a, b], [b, c]], and R = det(M) - k trace(M)^2 (scikit-image's corner_harris).
+function harrisResponse(gray,w,h,sigma,k){
+  const gradient=sobelField(gray,w,h),n=w*h,xx=new Float32Array(n),xy=new Float32Array(n),yy=new Float32Array(n);
+  for(let i=0;i<n;i++){const gx=gradient.gx[i],gy=gradient.gy[i];xx[i]=gx*gx;xy[i]=gx*gy;yy[i]=gy*gy}
+  const a=gaussian(xx,w,h,sigma),b=gaussian(xy,w,h,sigma),c=gaussian(yy,w,h,sigma),response=new Float32Array(n);
+  let maxResponse=0;
+  for(let i=0;i<n;i++){const trace=a[i]+c[i];response[i]=a[i]*c[i]-b[i]*b[i]-k*trace*trace;maxResponse=Math.max(maxResponse,response[i])}
+  return{gradient,a,b,c,response,maxResponse};
+}
+
+// Steps 3-4: candidates exceed the absolute threshold, and a candidate survives non-maximum
+// suppression only when no pixel in its (2r + 1) x (2r + 1) neighborhood has a larger R.
+// Equal plateaus keep their first pixel in raster order.
+function harrisPeaks(response,w,h,threshold,radius,eligible){
+  const candidates=new Uint8Array(w*h),corners=[];let candidateCount=0;
+  for(let i=0;i<response.length;i++)if(response[i]>threshold&&eligible(i%w,Math.floor(i/w))){candidates[i]=1;candidateCount++}
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const index=y*w+x;if(!candidates[index])continue;
+    const value=response[index];let peak=true;
+    for(let dy=-radius;dy<=radius&&peak;dy++)for(let dx=-radius;dx<=radius;dx++){
+      const xx=x+dx,yy=y+dy;if((!dx&&!dy)||xx<0||yy<0||xx>=w||yy>=h)continue;
+      const neighbor=yy*w+xx,other=response[neighbor];
+      if(other>value||(other===value&&neighbor<index)){peak=false;break}
+    }
+    if(peak)corners.push({x,y,response:value});
+  }
+  return{candidates,candidateCount,corners};
+}
+
+// Exclude a border wide enough that the Gaussian window never reaches the padded image edge or,
+// in the second view, the grey background around the rotated image.
+function harrisMargin(s){return Math.max(s.nms,Math.ceil(3*s.sigma)+2)}
+
+function harrisSecondView(view,{rotation,scale,contrast}){
+  const angle=rotation*Math.PI/180,factor=scale/100,cos=Math.cos(angle),sin=Math.sin(angle),gain=contrast/100;
+  const w=Math.max(1,Math.ceil(Math.abs(view.w*factor*cos)+Math.abs(view.h*factor*sin)-1e-6)),h=Math.max(1,Math.ceil(Math.abs(view.w*factor*sin)+Math.abs(view.h*factor*cos)-1e-6));
+  const surface=document.createElement('canvas');surface.width=w;surface.height=h;
+  const context=surface.getContext('2d',{willReadFrequently:true});
+  context.fillStyle='#808080';context.fillRect(0,0,w,h);
+  context.setTransform(factor*cos,factor*sin,-factor*sin,factor*cos,w/2,h/2);
+  context.drawImage(view.canvas,-view.w/2,-view.h/2);
+  context.setTransform(1,0,0,1,0,0);
+  const image=context.getImageData(0,0,w,h),data=image.data,gray=new Float32Array(w*h);
+  for(let i=0,p=0;i<data.length;i+=4,p++){
+    const luminance=.299*data[i]+.587*data[i+1]+.114*data[i+2];
+    gray[p]=(128+gain*(luminance-128))/255;
+    for(let channel=0;channel<3;channel++)data[i+channel]=128+gain*(data[i+channel]-128);
+  }
+  context.putImageData(image,0,0);
+  const centerX=view.w/2,centerY=view.h/2;
+  return{
+    canvas:surface,gray,w,h,factor,
+    toSecond(x,y){const dx=x+.5-centerX,dy=y+.5-centerY;return{x:w/2+factor*(cos*dx-sin*dy)-.5,y:h/2+factor*(sin*dx+cos*dy)-.5}},
+    // Distance, in second-view pixels, from (x, y) to the border of the transformed first image.
+    insideFirst(x,y){const dx=(x+.5-w/2)/factor,dy=(y+.5-h/2)/factor,fx=centerX+cos*dx+sin*dy-.5,fy=centerY-sin*dx+cos*dy-.5;return Math.min(fx,fy,view.w-1-fx,view.h-1-fy)*factor}
+  };
+}
+
+function matchHarrisCorners(firstCorners,secondCorners,second,margin){
+  const firstMatched=new Uint8Array(firstCorners.length),secondMatched=new Uint8Array(secondCorners.length);let visible=0,repeated=0;
+  firstCorners.forEach((corner,index)=>{
+    const position=second.toSecond(corner.x,corner.y);
+    if(second.insideFirst(position.x,position.y)<margin)return;
+    visible++;
+    let best=-1,bestDistance=HARRIS_MATCH_TOLERANCE;
+    secondCorners.forEach((other,otherIndex)=>{const distance=Math.hypot(other.x-position.x,other.y-position.y);if(distance<=bestDistance){best=otherIndex;bestDistance=distance}});
+    if(best>=0){repeated++;firstMatched[index]=1;secondMatched[best]=1}
+  });
+  return{visible,repeated,firstMatched,secondMatched};
+}
+
+function harrisEigen(a,b,c){const mean=(a+c)/2,radius=Math.hypot((a-c)/2,b);return[mean+radius,Math.max(0,mean-radius)]}
+function harrisClass(response,threshold){return response>threshold?'corner':response<-threshold?'edge':'flat'}
+function harrisNumber(value){const size=Math.abs(value);return !size?'0':size<1e-3||size>=1e4?value.toExponential(2):String(Number(value.toPrecision(3)))}
+function harrisRamp(stops,t){const x=clamp(t,0,1)*(stops.length-1),i=Math.min(stops.length-2,Math.floor(x)),f=x-i;return stops[i].map((value,k)=>value+(stops[i+1][k]-value)*f)}
+function setHarrisMeta(id,text){const meta=$('#'+id)?.closest('.card')?.querySelector('figcaption small');if(meta)meta.textContent=text}
+function harrisDotRadius(target){return Math.max(2,Math.min(target.width,target.height)/150)}
+
+function drawHarrisCorners(id,source,corners,matched=null){
+  const target=canvas(id,source),context=target.getContext('2d'),radius=harrisDotRadius(target);
+  corners.forEach((corner,index)=>{
+    context.beginPath();context.arc(corner.x+.5,corner.y+.5,radius,0,Math.PI*2);
+    if(!matched||matched[index]){context.fillStyle='#ff1f1f';context.fill();context.strokeStyle='rgba(255,255,255,.85)';context.lineWidth=1;context.stroke()}
+    else{context.strokeStyle='#ff1f1f';context.lineWidth=1.5;context.stroke()}
+  });
+  return target;
+}
+
+function drawHarrisResponseMap(id,response,w,h){
+  let maxAbs=0;for(const value of response)maxAbs=Math.max(maxAbs,Math.abs(value));
+  const image=new ImageData(w,h),scale=1/(maxAbs||1);
+  for(let i=0;i<response.length;i++){
+    // R grows with the fourth power of contrast; the fourth root keeps weaker structure visible.
+    const value=response[i],t=Math.sqrt(Math.sqrt(Math.abs(value)*scale)),color=harrisRamp(value>=0?HARRIS_CORNER_RAMP:HARRIS_EDGE_RAMP,t),p=i*4;
+    image.data[p]=color[0];image.data[p+1]=color[1];image.data[p+2]=color[2];image.data[p+3]=255;
+  }
+  put(id,image);
+}
+
+function drawHarrisCandidates(id,gray,w,h,candidates,corners=null){
+  const image=new ImageData(w,h),candidateColor=corners?[150,120,40]:[255,200,0];
+  for(let i=0;i<gray.length;i++){
+    const p=i*4,base=40+gray[i]*95;
+    if(candidates[i]){image.data[p]=candidateColor[0];image.data[p+1]=candidateColor[1];image.data[p+2]=candidateColor[2]}
+    else image.data[p]=image.data[p+1]=image.data[p+2]=base;
+    image.data[p+3]=255;
+  }
+  const target=put(id,image);
+  if(corners){
+    const context=target.getContext('2d'),radius=harrisDotRadius(target);
+    context.fillStyle='#ff1f1f';context.strokeStyle='#fff';context.lineWidth=1;
+    corners.forEach(corner=>{context.beginPath();context.arc(corner.x+.5,corner.y+.5,radius,0,Math.PI*2);context.fill();context.stroke()});
+  }
+}
+
+function drawHarrisProbe(target,probe,sigma){
+  const context=target.getContext('2d'),radius=Math.max(2,3*sigma),x=probe.x+.5,y=probe.y+.5,arm=radius+8;
+  [['rgba(0,0,0,.75)',3.5],['#fff',1.5]].forEach(([color,width])=>{
+    context.strokeStyle=color;context.lineWidth=width;context.beginPath();
+    context.arc(x,y,radius,0,Math.PI*2);
+    context.moveTo(x-arm,y);context.lineTo(x-radius-2,y);context.moveTo(x+radius+2,y);context.lineTo(x+arm,y);
+    context.moveTo(x,y-arm);context.lineTo(x,y-radius-2);context.moveTo(x,y+radius+2);context.lineTo(x,y+arm);
+    context.stroke();
+  });
+}
+
+function harrisProbe(s,view,corners){
+  if(!s.probe){
+    const strongest=corners.reduce((best,corner)=>!best||corner.response>best.response?corner:best,null);
+    s.probe=strongest?{x:(strongest.x+.5)/view.w,y:(strongest.y+.5)/view.h}:{x:.5,y:.5};
+  }
+  return{x:clamp(Math.floor(s.probe.x*view.w),0,view.w-1),y:clamp(Math.floor(s.probe.y*view.h),0,view.h-1)};
+}
+
+function renderHarrisInspector(first,probe,s,threshold,margin,corners){
+  const view=harrisRuntime.view,index=probe.y*view.w+probe.x,a=first.a[index],b=first.b[index],c=first.c[index];
+  const [lambda1,lambda2]=harrisEigen(a,b,c),det=a*c-b*b,trace=a+c,response=det-s.k*trace*trace,kind=harrisClass(response,threshold);
+  $('#harrisProbeMeta').textContent=`window centered at (${probe.x}, ${probe.y}) · σ = ${s.sigma}`;
+  [['harrisMxx',a],['harrisMxy',b],['harrisMyx',b],['harrisMyy',c],['harrisLambda1',lambda1],['harrisLambda2',lambda2],['harrisDet',det],['harrisTrace',trace],['harrisR',response],['harrisT',threshold]].forEach(([id,value])=>{$('#'+id).textContent=harrisNumber(value)});
+  const ratio=lambda1?lambda2/lambda1:0,kept=corners.some(corner=>corner.x===probe.x&&corner.y===probe.y),eligible=Math.min(probe.x,probe.y,view.w-1-probe.x,view.h-1-probe.y)>=margin;
+  const verdict=$('#harrisVerdict');verdict.className=`harris-verdict ${kind}`;
+  if(kind==='corner')verdict.textContent=`Corner: λ₂ = ${ratio.toFixed(2)} λ₁, so the window changes when shifted in any direction and R exceeds t. ${!eligible?`It lies within ${margin} px of the border, so it is not eligible.`:kept?'It is the largest R in its neighborhood and survives non-maximum suppression.':'A neighbor within the NMS radius has a larger R, so non-maximum suppression removes it.'}`;
+  else if(kind==='edge')verdict.textContent=`Edge: λ₂ = ${ratio.toFixed(2)} λ₁. The window changes only when shifted across the edge, so R is strongly negative.`;
+  else verdict.textContent=`Flat or weak: |R| ≤ t. Shifting this window changes it too little in every direction for it to count as a corner.`;
+  return{lambda1,lambda2,kind};
+}
+
+function sampleHarrisEigenvalues(first,w,h,margin){
+  const step=Math.max(1,Math.round(Math.sqrt(w*h/2400))),points=[];
+  for(let y=margin;y<h-margin;y+=step)for(let x=margin;x<w-margin;x+=step){const i=y*w+x;points.push(harrisEigen(first.a[i],first.b[i],first.c[i]))}
+  return points;
+}
+
+function drawHarrisPlane(target,samples,probe,k,threshold){
+  const dpr=devicePixelRatio||1,width=target.clientWidth||460,height=target.clientHeight||300;
+  target.width=Math.round(width*dpr);target.height=Math.round(height*dpr);
+  const context=target.getContext('2d'),margin={left:44,right:16,top:14,bottom:36},plotW=width-margin.left-margin.right,plotH=height-margin.top-margin.bottom;
+  context.setTransform(dpr,0,0,dpr,0,0);context.fillStyle='#fff';context.fillRect(0,0,width,height);
+  let maxLambda=probe.lambda1;for(const point of samples)maxLambda=Math.max(maxLambda,point[0]);
+  const extent=Math.sqrt(maxLambda*1.08)||1,toX=value=>margin.left+Math.sqrt(Math.max(0,value))/extent*plotW,toY=value=>margin.top+plotH-Math.sqrt(Math.max(0,value))/extent*plotH;
+  const region=context.createImageData(Math.max(1,Math.round(plotW*dpr)),Math.max(1,Math.round(plotH*dpr)));
+  for(let py=0;py<region.height;py++)for(let px=0;px<region.width;px++){
+    const u=(px+.5)/region.width*extent,v=(1-(py+.5)/region.height)*extent,lambda1=u*u,lambda2=v*v,trace=lambda1+lambda2;
+    // λ₁ is the larger eigenvalue, so only the half-plane below the diagonal is reachable.
+    const color=lambda2>lambda1?[255,255,255]:HARRIS_REGION_COLORS[harrisClass(lambda1*lambda2-k*trace*trace,threshold)],p=(py*region.width+px)*4;
+    region.data[p]=color[0];region.data[p+1]=color[1];region.data[p+2]=color[2];region.data[p+3]=255;
+  }
+  context.putImageData(region,Math.round(margin.left*dpr),Math.round(margin.top*dpr));
+  context.strokeStyle='#b8bcc4';context.lineWidth=1;context.strokeRect(margin.left+.5,margin.top+.5,plotW-1,plotH-1);
+  context.setLineDash([4,4]);context.strokeStyle='#9aa0aa';context.beginPath();context.moveTo(margin.left,margin.top+plotH);context.lineTo(margin.left+plotW,margin.top);context.stroke();context.setLineDash([]);
+  context.fillStyle='rgba(40,40,40,.35)';
+  for(const [lambda1,lambda2] of samples)context.fillRect(toX(lambda1)-1,toY(lambda2)-1,2,2);
+  const x=toX(probe.lambda1),y=toY(probe.lambda2);
+  context.lineWidth=2.5;context.strokeStyle='#fff';context.beginPath();context.arc(x,y,6,0,Math.PI*2);context.stroke();
+  context.lineWidth=1.5;context.strokeStyle='#111';context.stroke();
+  context.fillStyle={corner:'#d92323',edge:'#315ee7',flat:'#777'}[probe.kind];context.beginPath();context.arc(x,y,3,0,Math.PI*2);context.fill();
+  context.fillStyle='#666';context.font='10px ui-monospace, monospace';context.textAlign='center';
+  context.fillText('λ₁ · larger eigenvalue (√ scale)',margin.left+plotW/2,height-8);
+  context.save();context.translate(13,margin.top+plotH/2);context.rotate(-Math.PI/2);context.fillText('λ₂ · smaller (√ scale)',0,0);context.restore();
+  context.textAlign='right';context.fillText('0',margin.left-4,margin.top+plotH+12);context.fillText(harrisNumber(extent*extent),margin.left+plotW,margin.top+plotH+12);
+  context.save();context.translate(margin.left+plotW*.72,margin.top+plotH*.28-6);context.rotate(-Math.atan2(plotH,plotW));context.textAlign='center';context.fillText('λ₁ = λ₂',0,0);context.restore();
+  context.textAlign='left';context.fillStyle='#9a9a9a';context.fillText('λ₂ ≤ λ₁ by definition',margin.left+8,margin.top+16);
+}
+
+function renderHarris(experiment){
+  const started=performance.now(),s=experiment.state,runtime=harrisRuntime;
+  if(!runtime.view)runtime.view=prepareHarrisView();
+  const view=runtime.view,{w,h}=view,detectorKey=`${s.sigma}|${s.k}`,secondKey=`${detectorKey}|${s.rotation}|${s.scale}|${s.contrast}`;
+  if(runtime.firstKey!==detectorKey){runtime.first=harrisResponse(view.gray,w,h,s.sigma,s.k);runtime.firstKey=detectorKey}
+  if(runtime.secondKey!==secondKey){
+    const second=harrisSecondView(view,s);
+    second.analysis=harrisResponse(second.gray,second.w,second.h,s.sigma,s.k);
+    runtime.second=second;runtime.secondKey=secondKey;
+  }
+  const first=runtime.first,second=runtime.second,margin=harrisMargin(s),threshold=s.threshold/100*first.maxResponse;
+  const firstPeaks=harrisPeaks(first.response,w,h,threshold,s.nms,(x,y)=>Math.min(x,y,w-1-x,h-1-y)>=margin);
+  const secondPeaks=harrisPeaks(second.analysis.response,second.w,second.h,threshold,s.nms,(x,y)=>second.insideFirst(x,y)>=margin);
+  const match=matchHarrisCorners(firstPeaks.corners,secondPeaks.corners,second,margin),probe=harrisProbe(s,view,firstPeaks.corners);
+  runtime.corners=firstPeaks.corners;
+
+  canvas('harrisPre',view.canvas);
+  drawHarrisCorners('harrisPost',view.canvas,firstPeaks.corners);
+  renderSobelOrientation('harrisGradient',first.gradient,w,h);
+  drawHarrisResponseMap('harrisResponse',first.response,w,h);
+  drawHarrisCandidates('harrisCandidates',view.gray,w,h,firstPeaks.candidates);
+  drawHarrisCandidates('harrisMaxima',view.gray,w,h,firstPeaks.candidates,firstPeaks.corners);
+  ['harrisGradient','harrisResponse','harrisCandidates','harrisMaxima'].forEach(id=>drawHarrisProbe($('#'+id),probe,s.sigma));
+  const probed=renderHarrisInspector(first,probe,s,threshold,margin,firstPeaks.corners);
+  drawHarrisPlane($('#harrisPlane'),sampleHarrisEigenvalues(first,w,h,margin),probed,s.k,threshold);
+  drawHarrisCorners('harrisFirstView',view.canvas,firstPeaks.corners,match.firstMatched);
+  drawHarrisCorners('harrisSecondView',second.canvas,secondPeaks.corners,match.secondMatched);
+
+  const count=firstPeaks.corners.length,rate=match.visible?Math.round(match.repeated/match.visible*100):0;
+  setHarrisMeta('harrisPost',`${count} corners`);
+  setHarrisMeta('harrisCandidates',`${firstPeaks.candidateCount.toLocaleString()} pixels with R > t`);
+  setHarrisMeta('harrisMaxima',`${count} local maxima kept`);
+  setHarrisMeta('harrisFirstView',`${count} corners · ${w} × ${h}`);
+  setHarrisMeta('harrisSecondView',`${s.rotation}° · ${s.scale}% · contrast ${s.contrast}% · ${secondPeaks.corners.length} corners`);
+  $('#harrisCountFirst').textContent=count;
+  $('#harrisCountSecond').textContent=secondPeaks.corners.length;
+  $('#harrisVisible').textContent=match.visible;
+  $('#harrisRepeated').textContent=match.visible?`${match.repeated} (${rate}%)`:'—';
+  $('#harrisRepeatSummary').textContent=match.visible?`${rate}% repeatability`:'No comparable corners';
+  $$('#harrisPresets button').forEach(button=>{const preset=HARRIS_VIEW_PRESETS[button.dataset.harrisPreset];button.classList.toggle('active',Object.keys(preset).every(key=>preset[key]===s[key]))});
+  $('#harrisStatus').textContent=`${count} corners from ${firstPeaks.candidateCount.toLocaleString()} candidates · updated in ${Math.round(performance.now()-started)} ms`;
+  state.output=$('#harrisPost');
 }
 
 function heatColor(t){const stops=[[25,28,71],[38,90,170],[37,184,173],[245,210,72],[218,55,46]],x=t*(stops.length-1),i=Math.min(stops.length-2,Math.floor(x)),f=x-i;return stops[i].map((v,k)=>v+(stops[i+1][k]-v)*f)}
@@ -1598,6 +1964,24 @@ def gabor_power(image, theta=0, sigma=4, wavelength=10):
     imaginary = ndi.convolve(image, np.imag(kernel), mode="wrap")
     return kernel, np.sqrt(real**2 + imaginary**2)`,
 
+  harris:`import numpy as np
+from skimage.feature import corner_harris, corner_peaks
+
+def harris_corners(image, sigma=1.5, k=0.05, threshold=0.01, nms_radius=4):
+    gray = np.asarray(image, dtype=float)[..., :3] @ [0.299, 0.587, 0.114] / 255
+    # Replicate border pixels so the image frame does not become an artificial corner.
+    pad = int(4 * sigma) + 2
+    padded = np.pad(gray, pad, mode="edge")
+    # Steps 1-2: Sobel gradients, Gaussian-weighted M, R = det(M) - k trace(M)^2
+    response = corner_harris(padded, method="k", k=k, sigma=sigma)[pad:-pad, pad:-pad]
+    # Steps 3-4: keep R > threshold * max(R), then non-maximum suppression
+    border = max(nms_radius, int(np.ceil(3 * sigma)) + 2)
+    corners = corner_peaks(response, min_distance=nms_radius,
+                           threshold_rel=threshold, exclude_border=border)
+    return response, corners  # corners are (row, column) pairs`,
+
+  greedyNms:NMS_PYTHON_SAMPLE,
+
   opticalFlow:`import cv2
 import numpy as np
 
@@ -1634,11 +2018,15 @@ const WIKI={
   sobel:'https://en.wikipedia.org/wiki/Sobel_operator',
   imageGradient:'https://en.wikipedia.org/wiki/Image_gradient',
   canny:'https://en.wikipedia.org/wiki/Canny_edge_detector',
-  nms:'https://en.wikipedia.org/wiki/Non-maximum_suppression',
+  nms:'https://en.wikipedia.org/wiki/Canny_edge_detector#Gradient_magnitude_thresholding_or_lower_bound_cut-off_suppression',
   hough:'https://en.wikipedia.org/wiki/Hough_transform',
   template:'https://en.wikipedia.org/wiki/Template_matching',
   gabor:'https://en.wikipedia.org/wiki/Gabor_filter',
   gaborBank:'https://scikit-image.org/docs/stable/auto_examples/features_detection/plot_gabor.html',
+  harris:'https://en.wikipedia.org/wiki/Harris_corner_detector',
+  harrisNms:'https://en.wikipedia.org/wiki/Harris_corner_detector#Non-maximum_suppression',
+  structureTensor:'https://en.wikipedia.org/wiki/Structure_tensor',
+  cornerDetection:'https://en.wikipedia.org/wiki/Corner_detection',
   opticalFlow:'https://en.wikipedia.org/wiki/Optical_flow',
   lucasKanade:'https://en.wikipedia.org/wiki/Lucas%E2%80%93Kanade_method',
   imagePyramid:'https://en.wikipedia.org/wiki/Pyramid_(image_processing)'
@@ -1675,6 +2063,8 @@ function guideFor(id){
   if(id==='hough')return{overview:'All three sliders affect either the edge candidates, accumulator peaks, or rendered lines. Only the accumulator visual is remapped with nearest-neighbor sampling to match the input image aspect ratio.',params:[param('Edge threshold',s.edgeThreshold,'Minimum Sobel magnitude required for a pixel to vote.'),param('Peak threshold',`${s.voteThreshold}%`,'Minimum accumulator value as a percentage of the strongest vote.'),param('Maximum lines',s.lines,'Caps the number of separated accumulator peaks drawn on the image.'),param('Accumulator display','Input aspect ratio','Changes only the displayed Hough-space shape; the underlying θ–ρ votes and detected peaks are unchanged.')],links:[link('Hough transform',WIKI.hough)]};
   if(id==='template')return{overview:'There are no sliders. The dragged rectangle is the tunable input: its position and dimensions define the template patch.',params:[param('Patch',s.rect?`${Math.round(s.rect.w)} × ${Math.round(s.rect.h)}`:'Not selected','The selected pixels are compared at every valid source position using CC and zero-mean normalized CC.',Boolean(s.rect))],links:[link('Template matching',WIKI.template),link('Cross-correlation',WIKI.correlation)]};
   if(id==='gabor')return{overview:'The selected parameters define one complex member of a Gabor filter bank. Each grayscale texture is standardized, convolved with the raw real and imaginary kernel components using wrap boundaries, and shown as phase-invariant power. Response maps share one fixed display range, and the kernel preview uses one fixed spatial frame.',params:[param('Gamma',s.gamma.toFixed(2),'Controls the vertical aspect ratio of the Gaussian envelope. Gamma = 1 matches the circular envelope in the supplied Python reference; smaller values stretch it vertically.'),param('Sigma',s.sigma.toFixed(2),'Controls the Gaussian decay and therefore the spatial extent of the kernel.'),param('Omega',`${s.omega}°`,'Maps to theta in gabor_kernel and changes the preferred orientation of the sinusoidal carrier without changing the preview scale.'),param('Lambda',`${s.lambda.toFixed(1)} px`,'Sets frequency to 1 / lambda. Shorter wavelengths respond to finer texture cycles.'),param('Power','√(real² + imaginary²)','Combines the quadrature responses so the displayed magnitude does not depend on local phase.'),param('Display scales','Fixed','The response brightness range and the kernel preview’s pixel field are constant as parameters change.')],links:[link('Gabor filter',WIKI.gabor),link('Gabor filter banks for texture classification',WIKI.gaborBank)]};
+  if(id==='harris')return{overview:'Steps 1–4 follow the slide: Sobel gradients at each pixel, a Gaussian-weighted second-moment matrix M for each window with cornerness R = det(M) − k·trace(M)², a threshold on R, then non-maximum suppression. Click a step image to inspect M and its eigenvalues at that window. The second view reuses the first view’s absolute threshold, so its corner counts are directly comparable.',params:[param('Window sigma',s.sigma.toFixed(2),'Standard deviation of the Gaussian window w(x, y) that sums Ix², IxIy, and Iy² into M. Larger windows average over larger structures and suppress fine texture.'),param('k',s.k.toFixed(3),'Weight of trace(M)² in R. Larger k requires the two eigenvalues to be more similar before R becomes positive; 0.04–0.06 is typical, and k ≥ 0.25 rejects every window.'),param('Threshold',`${s.threshold.toFixed(1)}% of max R`,'Step 3 keeps pixels whose R exceeds this fraction of the strongest first-view response. The resulting absolute value t is reused for the second view.'),param('NMS radius',`${s.nms} px`,'Step 4 keeps a candidate only if it has the largest R in its (2r + 1) × (2r + 1) neighborhood, which also sets the minimum spacing between corners.'),param('Second view',`${s.rotation}° · ${s.scale}% · contrast ${s.contrast}%`,`Rotates, rescales, and changes the contrast of the loaded image before running the identical detector. Repeatability is the share of first-view corners that land inside the second view and have a second-view corner within ${HARRIS_MATCH_TOLERANCE} px of their transformed position.`)],links:[link('Harris corner detector',WIKI.harris),link('Structure tensor',WIKI.structureTensor),link('Corner detection',WIKI.cornerDetection),link('Non-maximum suppression',WIKI.harrisNms)]};
+  if(id==='greedyNms')return nmsGuide(s);
   if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants. Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',s.pyramidLevels,'Adds coarser resolutions before the full-resolution refinement. The display shows one more resolution than the number of downsampling steps.'),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
   return null;
 }
@@ -1748,7 +2138,7 @@ function mount(id){
 }
 function buildNav(){let group='';$('#experimentNav').innerHTML=experiments.map(e=>{const g=e.group!==group?`<div class="nav-group">${group=e.group}</div>`:'';return `${g}<button class="nav-button" data-id="${e.id}"><i>${e.icon}</i><span>${e.title}</span></button>`}).join('');$('#experimentNav').onclick=e=>{const b=e.target.closest('.nav-button');if(b)mount(b.dataset.id)}}
 function sample(){const c=state.source;c.width=1000;c.height=700;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,1000,700);g.addColorStop(0,'#f2c94c');g.addColorStop(.5,'#ed654e');g.addColorStop(1,'#3769da');x.fillStyle='#e7e7e1';x.fillRect(0,0,1000,700);x.fillStyle=g;x.fillRect(55,55,890,590);x.fillStyle='#17191d';x.fillRect(100,110,330,480);x.fillStyle='#f5c94c';x.beginPath();x.arc(715,260,145,0,Math.PI*2);x.fill();x.fillStyle='#3569db';x.beginPath();x.arc(755,455,105,0,Math.PI*2);x.fill();x.fillStyle='#ed5c49';x.fillRect(360,285,265,190);x.fillStyle='#fff';x.font='700 65px Arial';x.fillText('CV',155,280);x.fillText('LAB',125,365);state.name='Sample image';state.size=null;sourceChanged()}
-function sourceChanged(){const template=experiments.find(e=>e.id==='template');template.state.rect=null;template.state.drag=null;const c=$('#thumb');c.width=44;c.height=44;const crop=Math.min(state.source.width,state.source.height);c.getContext('2d').drawImage(state.source,(state.source.width-crop)/2,(state.source.height-crop)/2,crop,crop,0,0,44,44);$('#fileName').textContent=state.name;$('#imageMeta').textContent=`${state.source.width} × ${state.source.height}${state.size?' · '+formatBytes(state.size):''}`;const experiment=activeExperiment();experiment?.destroy?.();experiment?.mount();if(experiment){renderParameterGuide(experiment.id);renderPseudocode(experiment.id)}}
+function sourceChanged(){const template=experiments.find(e=>e.id==='template');template.state.rect=null;template.state.drag=null;experiments.find(e=>e.id==='harris').state.probe=null;const c=$('#thumb');c.width=44;c.height=44;const crop=Math.min(state.source.width,state.source.height);c.getContext('2d').drawImage(state.source,(state.source.width-crop)/2,(state.source.height-crop)/2,crop,crop,0,0,44,44);$('#fileName').textContent=state.name;$('#imageMeta').textContent=`${state.source.width} × ${state.source.height}${state.size?' · '+formatBytes(state.size):''}`;const experiment=activeExperiment();experiment?.destroy?.();experiment?.mount();if(experiment){renderParameterGuide(experiment.id);renderPseudocode(experiment.id)}}
 async function load(file){if(!file?.type.startsWith('image/'))return;const b=await createImageBitmap(file),[w,h]=fit(b.width,b.height);state.source.width=w;state.source.height=h;state.source.getContext('2d').drawImage(b,0,0,w,h);b.close();state.name=file.name;state.size=file.size;sourceChanged()}
 async function loadBundledImage(url,button){
   const image=new Image();
