@@ -341,8 +341,11 @@ const FLOW_MAX_RESIDUAL=.06;
 const FLOW_MAX_FB_ERROR=1;
 const FLOW_LOOP_MS=2400;
 const FLOW_DIAGRAM_SCALE=2;
+// The pyramid diagram always describes the motion with a 4-level estimate, so it does not
+// inherit the wrong matches of a 1–2 level run when the slider is lowered.
+const FLOW_REFERENCE_LEVELS=4;
 const FLOW_COLORS={single:'#4dd8ff',multi:'#3ddc84',recovered:'#ffd84d',lost:'#ff5a5f'};
-const flowRuntime={token:0,raf:0,computeRaf:0,ready:false,img1:null,img2:null,gt:null,frameA:null,frameB:null,points:[],single:[],multi:[]};
+const flowRuntime={token:0,raf:0,computeRaf:0,ready:false,img1:null,img2:null,gt:null,frameA:null,frameB:null,points:[],single:[],multi:[],reference:[]};
 const flowReducedMotion=()=>Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 const flowLevelsLabel=levels=>`${levels} level${levels===1?'':'s'}`;
 
@@ -383,7 +386,7 @@ function mountOpticalFlow(experiment){
   <div class="flow-grid flow-bottom-grid">
     ${flowCard('flowSingle','Single-scale Lucas–Kanade',`One LK solve at full resolution, starting from zero motion. It only locks on when the displacement roughly fits inside its ${FLOW_WINDOW} × ${FLOW_WINDOW} window. <span class="flow-key flow-key-cyan">Cyan arrows</span> are kept tracks; <span class="flow-key flow-key-red">red circles</span> mark points it loses but the pyramid keeps.`,'L0 only · zero initialization',`${flowMetric('kept tracks','flowSingleTracks')}${flowMetric('median |d|','flowSingleMedian')}`)}
     ${flowCard('flowMulti','Multi-scale / pyramidal Lucas–Kanade','Same points. LK starts at the coarsest level, where the motion is only a few pixels, then doubles the estimate and refines it at each finer level. <span class="flow-key flow-key-green">Green arrows</span> are kept by both methods; <span class="flow-key flow-key-yellow">yellow arrows</span> are points recovered by the pyramid (lost by single-scale).','',`${flowMetric('kept tracks','flowMultiTracks')}${flowMetric('median |d|','flowMultiMedian')}${flowMetric('recovered','flowRecovered')}`)}
-    ${flowCard('flowPyramid','Why the pyramid helps',`Each level halves the image, so the same motion covers fewer pixels while the LK window stays ${FLOW_WINDOW} × ${FLOW_WINDOW}. The square below each level is that window; the arrow is the median estimated motion at that level (<span class="flow-key flow-key-green">green</span> = within the window radius, <span class="flow-key flow-key-red">red</span> = beyond it).`,'','',`<div class="flow-formula" id="flowScaleFormula">—</div>`)}
+    ${flowCard('flowPyramid','Why the pyramid helps',`Levels run coarse → fine, left to right, in the order LK computes them. Each image is drawn at its true relative size; the white square is the ${FLOW_WINDOW} × ${FLOW_WINDOW}-pixel LK window drawn to the same scale. The window has the same number of pixels at every level, so it covers far more of a coarse image, while the motion (arrow) shrinks with the image (<span class="flow-key flow-key-green">green</span> = within the ${FLOW_RADIUS}-px window radius, <span class="flow-key flow-key-red">red</span> = beyond it).`,'','',`<div class="flow-formula" id="flowScaleFormula">—</div>`)}
   </div>
   <div class="note" id="flowPointInfo"></div>
   <div class="flow-status" id="flowStatus" role="status">Loading Sintel frames and computing the comparison…</div>
@@ -409,7 +412,7 @@ function destroyOpticalFlow(){
   if(flowRuntime.raf)cancelAnimationFrame(flowRuntime.raf);
   if(flowRuntime.computeRaf)cancelAnimationFrame(flowRuntime.computeRaf);
   flowRuntime.raf=0;flowRuntime.computeRaf=0;flowRuntime.ready=false;flowRuntime.img1=null;flowRuntime.img2=null;flowRuntime.gt=null;
-  flowRuntime.frameA=null;flowRuntime.frameB=null;flowRuntime.points=[];flowRuntime.single=[];flowRuntime.multi=[];
+  flowRuntime.frameA=null;flowRuntime.frameB=null;flowRuntime.points=[];flowRuntime.single=[];flowRuntime.multi=[];flowRuntime.reference=[];
 }
 
 async function initializeOpticalFlow(experiment,token){
@@ -651,13 +654,27 @@ function selectFlowPoint(event,isMulti,experiment){
   redrawFlowPanels();
 }
 
-// Equal-width columns, one per level: the image is drawn at its true relative size, the
-// square below it is the LK window (same size at every level) and the arrow is the motion.
+// Levels are laid out coarse → fine (left → right), i.e. in computation order. Each
+// thumbnail keeps its true relative size and the LK window is drawn on it at the same
+// scale: 17 × 17 level pixels everywhere, so it covers far more of the coarse images.
 function flowDiagramLayout(width,height,levels){
-  const pad=24,top=92,glyph=58,labels=62,gapBelowImage=12;
-  const column=(width-2*pad)/levels,aspect=flowRuntime.frameA.w/flowRuntime.frameA.h;
-  const fullWidth=Math.min(column-16,(height-top-gapBelowImage-glyph-labels-10)*aspect),fullHeight=fullWidth/aspect;
-  return{pad,top,column,fullWidth,fullHeight,glyph,glyphY:top+fullHeight+gapBelowImage+glyph/2};
+  const pad=24,top=92,gap=34,minColumn=124,imageGap=12,labelLines=4,lineHeight=26;
+  const aspect=flowRuntime.frameA.w/flowRuntime.frameA.h;
+  const columnsFor=fullWidth=>[...Array(levels)].map((_,index)=>Math.max(fullWidth/2**(levels-1-index),minColumn));
+  const totalFor=fullWidth=>columnsFor(fullWidth).reduce((sum,column)=>sum+column,0)+gap*(levels-1);
+  let fullWidth=(height-top-imageGap-labelLines*lineHeight-10)*aspect;
+  while(fullWidth>40&&totalFor(fullWidth)>width-2*pad)fullWidth-=2;
+  return{top,gap,lineHeight,imageGap,fullWidth,fullHeight:fullWidth/aspect,columns:columnsFor(fullWidth),x0:(width-totalFor(fullWidth))/2};
+}
+
+// A real tracked point near the image centre anchors the window drawn on every level.
+function flowDiagramAnchor(){
+  const {w,h}=flowRuntime.frameA;let best={x:w/2,y:h/2},distance=Infinity;
+  for(const track of flowRuntime.reference){
+    const d=Math.hypot(track.x-w/2,track.y-h/2);
+    if(track.valid&&d<distance){distance=d;best=track}
+  }
+  return best;
 }
 
 function drawFlowPyramid(){
@@ -665,33 +682,47 @@ function drawFlowPyramid(){
   const experiment=experiments.find(item=>item.id==='opticalFlow'),levels=experiment.state.pyramidLevels;
   const width=flowRuntime.frameA.w*FLOW_DIAGRAM_SCALE,height=flowRuntime.frameA.h*FLOW_DIAGRAM_SCALE;
   const context=sizeFlowCanvas(canvasElement,width,height);context.fillStyle='#17191d';context.fillRect(0,0,width,height);
-  const median=flowMedianVector(flowRuntime.multi)||{u:experiment.state.extraMotion,v:0};
-  const magnitude=Math.hypot(median.u,median.v),layout=flowDiagramLayout(width,height,levels);
-  const windowSide=layout.glyph,glyphScale=windowSide/FLOW_WINDOW,maxArrow=layout.column/2-10;
+  const median=flowMedianVector(flowRuntime.reference)||{u:experiment.state.extraMotion,v:0};
+  const magnitude=Math.hypot(median.u,median.v),layout=flowDiagramLayout(width,height,levels),anchor=flowDiagramAnchor();
+  const pixel=layout.fullWidth/flowRuntime.frameA.w,windowSide=FLOW_WINDOW*pixel,imageBottom=layout.top+layout.fullHeight;
+  let columnX=layout.x0;
   context.textAlign='center';
-  for(let level=0;level<levels;level++){
-    const factor=2**level,w=layout.fullWidth/factor,h=layout.fullHeight/factor,cx=layout.pad+layout.column*(level+.5),x=cx-w/2,y=layout.top+layout.fullHeight-h,cy=layout.glyphY;
-    const displacement=magnitude/factor,color=displacement<=FLOW_RADIUS?FLOW_COLORS.multi:FLOW_COLORS.lost,isStart=level===levels-1&&levels>1;
+  for(let index=0;index<levels;index++){
+    const level=levels-1-index,factor=2**level,column=layout.columns[index],cx=columnX+column/2;
+    const w=layout.fullWidth/factor,h=layout.fullHeight/factor,x=cx-w/2,y=imageBottom-h;
+    const displacement=magnitude/factor,fits=displacement<=FLOW_RADIUS,color=fits?FLOW_COLORS.multi:FLOW_COLORS.lost,isStart=index===0&&levels>1;
     context.drawImage(flowRuntime.frameA.canvas,x,y,w,h);
     context.strokeStyle=isStart?FLOW_COLORS.recovered:'#dbeafe';context.lineWidth=isStart?3:1.5;context.strokeRect(x,y,w,h);
-    context.strokeStyle='rgba(219,234,254,.85)';context.lineWidth=2;context.strokeRect(cx-windowSide/2,cy-windowSide/2,windowSide,windowSide);
-    // Cap the drawn length so very large motions stay inside their column (the label keeps the true value).
-    const arrowScale=Math.min(glyphScale,displacement>0?maxArrow/displacement:glyphScale);
-    if(displacement>0)drawFlowArrow(context,cx,cy,median.u/factor,median.v/factor,arrowScale,color,4,12);
-    context.fillStyle='#fff';context.beginPath();context.arc(cx,cy,4,0,Math.PI*2);context.fill();
-    const levelW=Math.ceil(flowRuntime.frameA.w/factor),levelH=Math.ceil(flowRuntime.frameA.h/factor),labelY=cy+layout.glyph/2;
-    context.font='bold 24px Arial';context.fillStyle=isStart?FLOW_COLORS.recovered:'#dbeafe';
-    context.fillText(`L${level} · ${levelW}×${levelH}`,cx,labelY+30);
-    context.font='bold 24px monospace';context.fillStyle=color;context.fillText(`${displacement.toFixed(1)} px`,cx,labelY+60);
+    // One level pixel is `pixel` canvas units at every level, so the window keeps the same drawn size.
+    const px=x+anchor.x/factor*pixel,py=y+anchor.y/factor*pixel;
+    context.fillStyle='rgba(255,255,255,.22)';context.fillRect(px-windowSide/2,py-windowSide/2,windowSide,windowSide);
+    context.strokeStyle='#000';context.lineWidth=4;context.strokeRect(px-windowSide/2,py-windowSide/2,windowSide,windowSide);
+    context.strokeStyle='#fff';context.lineWidth=2;context.strokeRect(px-windowSide/2,py-windowSide/2,windowSide,windowSide);
+    if(displacement>0)drawFlowArrow(context,px,py,median.u/factor,median.v/factor,pixel,color,3,7);
+    const levelW=Math.ceil(flowRuntime.frameA.w/factor),levelH=Math.ceil(flowRuntime.frameA.h/factor),labelY=imageBottom+layout.imageGap;
+    context.font='bold 22px Arial';context.fillStyle=isStart?FLOW_COLORS.recovered:'#dbeafe';
+    context.fillText(isStart?`L${level} · start`:`L${level}`,cx,labelY+layout.lineHeight-4);
+    context.font='18px monospace';context.fillStyle='#aab3c2';context.fillText(`${levelW}×${levelH}`,cx,labelY+layout.lineHeight*2-4);
+    context.font='bold 21px monospace';context.fillStyle=color;context.fillText(`${displacement.toFixed(1)} px`,cx,labelY+layout.lineHeight*3-4);
+    context.font='18px monospace';context.fillText(`${fits?'≤':'>'} r = ${FLOW_RADIUS}`,cx,labelY+layout.lineHeight*4-4);
+    columnX+=column;
+    if(index<levels-1){
+      // "×2" sits in the label band between columns, clear of the thumbnails.
+      const labelY=imageBottom+layout.imageGap;
+      context.font='bold 19px Arial';context.fillStyle='#dbeafe';
+      context.fillText('×2',columnX+layout.gap/2,labelY+layout.lineHeight-4);
+      context.fillText('→',columnX+layout.gap/2,labelY+layout.lineHeight*2-4);
+      columnX+=layout.gap;
+    }
   }
   context.textAlign='start';
-  $('#flowPyramidBadge').textContent=levels>1?`solve L${levels-1} first → double & refine → L0`:'1 level = full resolution only';
-  const chain=[...Array(levels)].map((_,level)=>`${(magnitude/2**level).toFixed(1)} px`).join(' → ');
+  $('#flowPyramidBadge').textContent=levels>1?`start at L${levels-1} → ×2 & refine → L0`:'1 level = full resolution only';
+  const chain=[...Array(levels)].map((_,index)=>`${(magnitude/2**(levels-1-index)).toFixed(1)} px`).join(' → ');
   const strong=document.createElement('b');strong.textContent=`|d| ≈ ${chain}`;
   const detail=document.createElement('small');
   detail.textContent=levels>1
-    ?`L0 → L${levels-1}, from the median pyramidal estimate. The window radius is ${FLOW_RADIUS} px at every level, so LK starts where the motion is smallest and passes 2 × its estimate down to the next finer level.`
-    :`Only one level: the full motion must fit inside the ${FLOW_RADIUS}-px window radius, exactly as in single-scale LK.`;
+    ?`L${levels-1} → L0 (computation order), using the median motion from a ${FLOW_REFERENCE_LEVELS}-level reference run. LK solves the small coarse motion first, then each finer level starts from 2 × the previous estimate and only corrects the remaining error.`
+    :`Only one level: the full ${magnitude.toFixed(1)}-px motion (median of a ${FLOW_REFERENCE_LEVELS}-level reference run) must fit inside the ${FLOW_RADIUS}-px window radius, exactly as in single-scale LK.`;
   $('#flowScaleFormula').replaceChildren(strong,detail);
 }
 
@@ -719,6 +750,7 @@ function computeOpticalFlow(experiment,token=flowRuntime.token){
   resetFlowPointInfo(experiment);
   flowRuntime.single=trackFlow(flowRuntime.frameA,flowRuntime.frameB,flowRuntime.points,1);
   flowRuntime.multi=trackFlow(flowRuntime.frameA,flowRuntime.frameB,flowRuntime.points,pyramidLevels);
+  flowRuntime.reference=pyramidLevels===FLOW_REFERENCE_LEVELS?flowRuntime.multi:trackFlow(flowRuntime.frameA,flowRuntime.frameB,flowRuntime.points,FLOW_REFERENCE_LEVELS);
   $('#flowMultiBadge').textContent=`${flowLevelsLabel(pyramidLevels)} · L${pyramidLevels-1} → L0 (coarse → fine)`;
   updateFlowMetrics();drawFlowPyramid();redrawFlowPanels();state.output=$('#flowMulti');
   $('#flowStatus').textContent=`Ready · ${flowRuntime.points.length} shared points · extra motion ${extraMotion} px · ${flowLevelsLabel(pyramidLevels)} · same stressed input for both LK variants · ${Math.round(performance.now()-started)} ms.`;
@@ -2424,7 +2456,7 @@ function guideFor(id){
   if(id==='anms')return{overview:'Candidates are Harris corners (σ = 1.5, k = 0.05) that are local maxima in a 3 × 3 neighborhood, with R above 0.01% of the maximum, at least 6 px from the border, capped at the strongest 4000. Strongest-N sorts them by response; adaptive NMS sorts them by suppression radius, the distance to the nearest candidate whose response exceeds c times their own.',params:[param('Keypoints kept',`N = ${s.budget}`,'The keypoint budget. Panels (a) and (c) keep N points; panels (b) and (d) keep 2N, as on the slide.'),param('Robustness factor',`c = ${s.robustness.toFixed(2)}`,'A neighbor suppresses a candidate only if its response exceeds c times the candidate’s. Brown et al. write the condition as f(xᵢ) < 0.9 f(xⱼ), which is c ≈ 1.1 here: only a clearly stronger neighbor counts. Larger c keeps more similar-strength neighbors side by side.'),param('Radius r','smallest kept radius','The caption of each ANMS panel reports the N-th largest suppression radius: every kept point is at least r away from any candidate more than c times stronger. At c = 1 this is also the minimum spacing between kept points.')],links:[link('Brown, Szeliski and Winder 2005 (MOPS)','https://www.microsoft.com/en-us/research/publication/multi-image-matching-using-multi-scale-oriented-patches/'),link('Szeliski: Computer Vision, 2nd ed.','https://szeliski.org/Book/'),link('Harris corner detector',WIKI.harris),link('Non-maximum suppression',WIKI.harrisNms)]};
   if(id==='siftDescriptor')return siftGuide(s);
   if(id==='ratioTest')return ratioGuide(s);
-  if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants, with the same 17 × 17 window, iteration budget and validity test (window residual plus a forward–backward check). Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',`${s.pyramidLevels} (L0–L${s.pyramidLevels-1})`,`Number of resolutions including the full-resolution image L0; each further level halves width and height (OpenCV maxLevel = ${s.pyramidLevels-1}). Tracking starts at the smallest level and refines the doubled displacement at each finer level. 1 level = single-scale LK.`),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.'),param('Arrow scale',`${Number(s.arrowScale??1).toFixed(2)}×`,'Display only: lengthens or shortens the drawn arrows; the estimated (u, v) is unchanged.'),param('LK panel background',s.viewFrame==='anim'?'Animate A → B':`Frame ${s.viewFrame}`,'Animate cross-fades frame A into the (shifted) frame B while each arrow grows from p to p′. Frame A / Frame B freeze the background at the arrow start / end.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
+  if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants, with the same 17 × 17 window, iteration budget and validity test (window residual plus a forward–backward check). Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',`${s.pyramidLevels} (L0–L${s.pyramidLevels-1})`,`Number of resolutions including the full-resolution image L0; each further level halves width and height (OpenCV maxLevel = ${s.pyramidLevels-1}). Tracking starts at the smallest level and refines the doubled displacement at each finer level. 1 level = single-scale LK.`),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
   return null;
 }
 
