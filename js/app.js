@@ -356,7 +356,7 @@ function mountOpticalFlow(experiment){
   const token=flowRuntime.token,s=experiment.state;
   root.innerHTML=`<div class="controls flow-controls">
     ${controlRange('flowExtraMotion','Extra motion',0,36,s.extraMotion,2)}
-    ${controlRange('flowPyramidLevels','Pyramid levels',1,4,s.pyramidLevels)}
+    ${controlRange('flowPyramidLevels','Downsampling steps',1,4,s.pyramidLevels)}
     ${controlRange('flowTrackedPoints','Tracked points',80,360,s.trackedPoints,20)}
     ${controlRange('flowArrowScale','Arrow scale',0.5,2,s.arrowScale??1,0.25)}
     <label style="display:flex;align-items:center;gap:8px;font-size:14px">Background frame <select id="flowViewFrame" aria-label="Comparison frame"><option value="A">Frame A</option><option value="B">Frame B</option></select></label>
@@ -367,9 +367,9 @@ function mountOpticalFlow(experiment){
   </div>
   <div class="note flow-notice"><b>Teaching stress test:</b> <b>Extra motion</b> shifts the second frame only for the comparison panels below. The GT dense flow above remains the ground truth for the <b>original adjacent Sintel pair</b>; it is not recalculated for the stressed pair.</div>
   <div class="flow-grid flow-bottom-grid">
-    ${flowCard('flowSingle','Single-scale Lucas–Kanade','Full resolution only. <span class="flow-key flow-key-cyan">Cyan arrows</span> are estimates; <span class="flow-key flow-key-red">red rings</span> mark points the pyramid recovers.','full resolution · zero initialization',`${flowMetric('tracked points','flowSingleTracks')}${flowMetric('median displacement','flowSingleMedian')}`)}
-    ${flowCard('flowMulti','Multi-scale / pyramidal Lucas–Kanade','The same points and same pair. <span class="flow-key flow-key-green">Green arrows</span> are valid estimates; <span class="flow-key flow-key-yellow">yellow arrows</span> are recovered or substantially improved relative to single-scale LK (not verified against ground truth).','coarse → fine',`${flowMetric('tracked points','flowMultiTracks')}${flowMetric('recovered / improved','flowRecovered')}`)}
-    ${flowCard('flowPyramid','Why the pyramid helps','Downsampling makes the same displacement smaller in pixel units, so local linearization becomes easier before the estimate is refined at full resolution.','same motion · smaller at coarse scale','',`<div class="flow-formula" id="flowScaleFormula">24 px → 12 px → 6 px → 3 px</div>`)}
+    ${flowCard('flowSingle','Single-scale Lucas–Kanade','Tracks points directly at full resolution. Small movements are easier to follow; large ones may be missed. <span class="flow-key flow-key-cyan">Cyan arrows</span> show estimated movement; <span class="flow-key flow-key-red">red circles</span> mark points that the pyramid tracks more successfully.','full resolution · zero initialization',`${flowMetric('tracked points','flowSingleTracks')}${flowMetric('median displacement','flowSingleMedian')}`)}
+    ${flowCard('flowMulti','Multi-scale / pyramidal Lucas–Kanade','Tracks the same points, starting with a smaller image to handle large movements. It then enlarges and refines the estimates at each finer resolution. <span class="flow-key flow-key-green">Green arrows</span> show estimates; <span class="flow-key flow-key-yellow">yellow arrows</span> show points recovered or improved compared with single-scale LK (not ground-truth verified).','smallest → full resolution',`${flowMetric('tracked points','flowMultiTracks')}${flowMetric('recovered / improved','flowRecovered')}`)}
+    ${flowCard('flowPyramid','Why the pyramid helps','For example, a 24 px movement shrinks to 12, 6, then 3 px after three downsampling steps. LK starts with the smallest image, then doubles and refines its estimated movement at each finer resolution.','downscale → estimate → upscale & refine','',`<div class="flow-formula" id="flowScaleFormula">24 px → 12 px → 6 px → 3 px</div>`)}
   </div>
   <div class="note" id="flowPointInfo">Click a valid arrow to inspect p = (x, y), p′ = (x + u, y + v), and displacement (u, v). White dots mark starts; colored dots mark estimated endpoints.</div>
   <div class="flow-status" id="flowStatus" role="status">Loading Sintel frames and computing the comparison…</div>
@@ -591,7 +591,7 @@ function drawFlowPyramid(){
   }
   context.fillStyle='#dbeafe';context.font='bold 13px Arial';context.fillText('same displacement → fewer pixels at coarse scale',18,height-10);
   const values=[];for(let level=0;level<=levels;level++){const scaled=motion/(2**level);values.push(`${Number.isInteger(scaled)?scaled:scaled.toFixed(1)} px`)}
-  $('#flowScaleFormula').textContent=values.join(' → ');
+  $('#flowScaleFormula').textContent=values.join(' → ') + ' (downscaling); LK then tracks from coarse to fine, doubling and refining the displacement at each step.';
 }
 
 function updateFlowMetrics(){
@@ -610,7 +610,7 @@ function computeOpticalFlow(experiment,token=flowRuntime.token){
   flowRuntime.single=trackSingleFlow(flowRuntime.frameA,flowRuntime.frameB,flowRuntime.points);
   flowRuntime.multi=trackMultiFlow(flowRuntime.frameA,flowRuntime.frameB,flowRuntime.points,pyramidLevels);
   const multiBadge=$('#flowMulti')?.parentElement?.querySelector('.flow-badge');
-  if(multiBadge)multiBadge.textContent=`${pyramidLevels+1} resolutions · coarse → fine`;
+  if(multiBadge)multiBadge.textContent=`${pyramidLevels+1} resolutions (${pyramidLevels} downsampling steps) · coarse → fine`;
   updateFlowMetrics();drawFlowPyramid();redrawFlowPanels();state.output=$('#flowMulti');
   $('#flowStatus').textContent=`Ready · ${flowRuntime.points.length} shared points · extra motion ${extraMotion}px · same stressed input used for both LK variants.`;
 }
@@ -2299,7 +2299,7 @@ function guideFor(id){
   if(id==='anms')return{overview:'Candidates are Harris corners (σ = 1.5, k = 0.05) that are local maxima in a 3 × 3 neighborhood, with R above 0.01% of the maximum, at least 6 px from the border, capped at the strongest 4000. Strongest-N sorts them by response; adaptive NMS sorts them by suppression radius, the distance to the nearest candidate whose response exceeds c times their own.',params:[param('Keypoints kept',`N = ${s.budget}`,'The keypoint budget. Panels (a) and (c) keep N points; panels (b) and (d) keep 2N, as on the slide.'),param('Robustness factor',`c = ${s.robustness.toFixed(2)}`,'A neighbor suppresses a candidate only if its response exceeds c times the candidate’s. Brown et al. write the condition as f(xᵢ) < 0.9 f(xⱼ), which is c ≈ 1.1 here: only a clearly stronger neighbor counts. Larger c keeps more similar-strength neighbors side by side.'),param('Radius r','smallest kept radius','The caption of each ANMS panel reports the N-th largest suppression radius: every kept point is at least r away from any candidate more than c times stronger. At c = 1 this is also the minimum spacing between kept points.')],links:[link('Brown, Szeliski and Winder 2005 (MOPS)','https://www.microsoft.com/en-us/research/publication/multi-image-matching-using-multi-scale-oriented-patches/'),link('Szeliski: Computer Vision, 2nd ed.','https://szeliski.org/Book/'),link('Harris corner detector',WIKI.harris),link('Non-maximum suppression',WIKI.harrisNms)]};
   if(id==='siftDescriptor')return siftGuide(s);
   if(id==='ratioTest')return ratioGuide(s);
-  if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants. Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',s.pyramidLevels,'Adds coarser resolutions before the full-resolution refinement. The display shows one more resolution than the number of downsampling steps.'),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
+  if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants. Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',s.pyramidLevels,'Each step halves the image dimensions. N steps give N+1 resolutions including the original; tracking starts at the smallest and refines the upscaled displacement at each finer level.'),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
   return null;
 }
 
