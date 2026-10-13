@@ -97,7 +97,7 @@ createNmsExperiment(root),
   icon:'↝',
   title:'Optical flow: single vs multi-scale',
   description:'Track the same Sintel motion with single-scale and pyramidal Lucas–Kanade.',
-  state:{extraMotion:24,pyramidLevels:3,trackedPoints:220},
+  state:{extraMotion:24,pyramidLevels:3,trackedPoints:220,arrowScale:1,viewFrame:'A',selectedFlowPoint:null},
   mount(){mountOpticalFlow(this)},
   destroy(){destroyOpticalFlow(this)}
 }
@@ -358,6 +358,8 @@ function mountOpticalFlow(experiment){
     ${controlRange('flowExtraMotion','Extra motion',0,36,s.extraMotion,2)}
     ${controlRange('flowPyramidLevels','Pyramid levels',1,4,s.pyramidLevels)}
     ${controlRange('flowTrackedPoints','Tracked points',80,360,s.trackedPoints,20)}
+    ${controlRange('flowArrowScale','Arrow scale',0.5,2,s.arrowScale??1,0.25)}
+    <label style="display:flex;align-items:center;gap:8px;font-size:14px">Background frame <select id="flowViewFrame" aria-label="Comparison frame"><option value="A">Frame A</option><option value="B">Frame B</option></select></label>
   </div>
   <div class="flow-grid flow-top-grid">
     ${flowCard('flowSource','Original Sintel motion','Animated adjacent frame pair. This is the unmodified source motion.','original adjacent pair')}
@@ -366,9 +368,10 @@ function mountOpticalFlow(experiment){
   <div class="note flow-notice"><b>Teaching stress test:</b> <b>Extra motion</b> shifts the second frame only for the comparison panels below. The GT dense flow above remains the ground truth for the <b>original adjacent Sintel pair</b>; it is not recalculated for the stressed pair.</div>
   <div class="flow-grid flow-bottom-grid">
     ${flowCard('flowSingle','Single-scale Lucas–Kanade','Full resolution only. <span class="flow-key flow-key-cyan">Cyan arrows</span> are estimates; <span class="flow-key flow-key-red">red rings</span> mark points the pyramid recovers.','full resolution · zero initialization',`${flowMetric('tracked points','flowSingleTracks')}${flowMetric('median displacement','flowSingleMedian')}`)}
-    ${flowCard('flowMulti','Multi-scale / pyramidal Lucas–Kanade','The same points and same pair. <span class="flow-key flow-key-green">Green arrows</span> are valid estimates; <span class="flow-key flow-key-yellow">yellow arrows</span> are correspondences recovered by the pyramid.','coarse → fine',`${flowMetric('tracked points','flowMultiTracks')}${flowMetric('recovered by pyramid','flowRecovered')}`)}
+    ${flowCard('flowMulti','Multi-scale / pyramidal Lucas–Kanade','The same points and same pair. <span class="flow-key flow-key-green">Green arrows</span> are valid estimates; <span class="flow-key flow-key-yellow">yellow arrows</span> are recovered or substantially improved relative to single-scale LK (not verified against ground truth).','coarse → fine',`${flowMetric('tracked points','flowMultiTracks')}${flowMetric('recovered / improved','flowRecovered')}`)}
     ${flowCard('flowPyramid','Why the pyramid helps','Downsampling makes the same displacement smaller in pixel units, so local linearization becomes easier before the estimate is refined at full resolution.','same motion · smaller at coarse scale','',`<div class="flow-formula" id="flowScaleFormula">24 px → 12 px → 6 px → 3 px</div>`)}
   </div>
+  <div class="note" id="flowPointInfo">Click a valid arrow to inspect p = (x, y), p′ = (x + u, y + v), and displacement (u, v). White dots mark starts; colored dots mark estimated endpoints.</div>
   <div class="flow-status" id="flowStatus" role="status">Loading Sintel frames and computing the comparison…</div>
   <div class="note flow-takeaway"><b>Classroom takeaway:</b> start at <b>Extra motion = 0 px</b>, then increase it toward <b>20–30 px</b>. Single-scale LK should lose more correspondences as displacement grows, while pyramidal LK can initialize the motion at a coarse level and refine it at finer levels.</div>
   <div class="flow-source-note">Source frames and dense-flow visualization: <a href="https://github.com/open-mmlab/mmflow/tree/master/demo" target="_blank" rel="noopener noreferrer">MMFlow Sintel demo</a>. The extra translation is an explicit teaching stress test applied identically to both LK variants.</div>`;
@@ -376,6 +379,11 @@ function mountOpticalFlow(experiment){
   bindRange('flowExtraMotion',value=>{experiment.state.extraMotion=value;computeOpticalFlow(experiment,token)},value=>`${value} px`);
   bindRange('flowPyramidLevels',value=>{experiment.state.pyramidLevels=value;computeOpticalFlow(experiment,token)});
   bindRange('flowTrackedPoints',value=>{experiment.state.trackedPoints=value;computeOpticalFlow(experiment,token)});
+  bindRange('flowArrowScale',value=>{experiment.state.arrowScale=value;redrawFlowPanels()},value=>`${Number(value).toFixed(2)}×`);
+  $('#flowArrowScaleOut').textContent=`${Number(s.arrowScale??1).toFixed(2)}×`;
+  $('#flowViewFrame').value=s.viewFrame||'A';
+  $('#flowViewFrame').addEventListener('change',event=>{experiment.state.viewFrame=event.target.value;redrawFlowPanels()});
+  for(const id of ['flowSingle','flowMulti'])$('#'+id).addEventListener('click',event=>selectFlowPoint(event,id==='flowMulti',experiment));
   $('#flowExtraMotionOut').textContent=`${s.extraMotion} px`;
   initializeOpticalFlow(experiment,token);
 }
@@ -513,25 +521,61 @@ function flowMedian(values){
   return sorted.length%2?sorted[middle]:(sorted[middle-1]+sorted[middle])/2;
 }
 
-function drawFlowArrow(context,x,y,u,v,progress,color,width){
-  const gain=1.5,endX=x+u*gain*progress,endY=y+v*gain*progress,angle=Math.atan2(v,u),head=4;
+function drawFlowArrow(context,x,y,u,v,scale,color,width){
+  const endX=x+u*scale,endY=y+v*scale,angle=Math.atan2(v,u),head=4;
   context.strokeStyle=color;context.fillStyle=color;context.lineWidth=width;context.beginPath();context.moveTo(x,y);context.lineTo(endX,endY);context.stroke();
-  if(progress>.75){context.beginPath();context.moveTo(endX,endY);context.lineTo(endX-head*Math.cos(angle-.55),endY-head*Math.sin(angle-.55));context.lineTo(endX-head*Math.cos(angle+.55),endY-head*Math.sin(angle+.55));context.closePath();context.fill()}
+  if(Math.hypot(u,v)*scale>4){context.beginPath();context.moveTo(endX,endY);context.lineTo(endX-head*Math.cos(angle-.55),endY-head*Math.sin(angle-.55));context.lineTo(endX-head*Math.cos(angle+.55),endY-head*Math.sin(angle+.55));context.closePath();context.fill()}
 }
 
-function drawFlowPanel(id,tracks,isMulti,progress){
+function drawFlowPanel(id,tracks,isMulti){
   const canvasElement=$('#'+id);if(!canvasElement||!flowRuntime.frameA)return;
+  const experiment=experiments.find(item=>item.id==='opticalFlow');
+  const scale=Number(experiment.state.arrowScale??1);
+  const background=experiment.state.viewFrame==='B'?flowRuntime.frameB:flowRuntime.frameA;
   canvasElement.width=flowRuntime.frameA.w;canvasElement.height=flowRuntime.frameA.h;
-  const context=canvasElement.getContext('2d');context.drawImage(flowRuntime.frameA.canvas,0,0);context.fillStyle='rgba(0,0,0,.28)';context.fillRect(0,0,canvasElement.width,canvasElement.height);
+  const context=canvasElement.getContext('2d');context.drawImage(background.canvas,0,0);
+  context.fillStyle='rgba(0,0,0,.28)';context.fillRect(0,0,canvasElement.width,canvasElement.height);
   for(let index=0;index<tracks.length;index++){
     const track=tracks[index];
     if(track.valid){
       const recovered=isMulti&&flowRecovered(index),color=recovered?'#ffd84d':(isMulti?'#3ddc84':'#4dd8ff');
-      drawFlowArrow(context,track.x,track.y,track.u,track.v,progress,color,recovered?2.2:1.2);
+      drawFlowArrow(context,track.x,track.y,track.u,track.v,scale,color,recovered?2.2:1.2);
+      context.fillStyle='#fff';context.beginPath();context.arc(track.x,track.y,1.8,0,Math.PI*2);context.fill();
+      context.fillStyle=color;context.beginPath();context.arc(track.x+track.u*scale,track.y+track.v*scale,2.1,0,Math.PI*2);context.fill();
     }else if(!isMulti&&flowRecovered(index)){
       context.strokeStyle='#ff5a5f';context.lineWidth=1.7;context.beginPath();context.arc(track.x,track.y,3.1,0,Math.PI*2);context.stroke();
     }
   }
+  const selected=tracks[experiment.state.selectedFlowPoint];
+  if(selected?.valid){
+    const sx=selected.x,sy=selected.y,ex=sx+selected.u*scale,ey=sy+selected.v*scale;
+    context.strokeStyle='#fff';context.lineWidth=2.5;
+    for(const [x,y] of [[sx,sy],[ex,ey]]){context.beginPath();context.arc(x,y,5,0,Math.PI*2);context.stroke()}
+    context.font='bold 13px Arial';context.fillStyle='#fff';context.shadowColor='#000';context.shadowBlur=5;
+    context.fillText('p',sx+7,sy-8);context.fillText("p'",ex+7,ey-8);context.shadowBlur=0;
+  }
+}
+function redrawFlowPanels(){
+  if(!flowRuntime.ready)return;
+  drawFlowPanel('flowSingle',flowRuntime.single,false);
+  drawFlowPanel('flowMulti',flowRuntime.multi,true);
+}
+function selectFlowPoint(event,isMulti,experiment){
+  const canvasElement=event.currentTarget,rect=canvasElement.getBoundingClientRect();
+  const x=(event.clientX-rect.left)*canvasElement.width/rect.width,y=(event.clientY-rect.top)*canvasElement.height/rect.height;
+  const tracks=isMulti?flowRuntime.multi:flowRuntime.single;
+  let best=-1,distance=Infinity;
+  tracks.forEach((track,i)=>{
+    if(!track.valid)return;
+    const scale=experiment.state.arrowScale??1;
+    const d=Math.min(Math.hypot(x-track.x,y-track.y),Math.hypot(x-track.x-track.u*scale,y-track.y-track.v*scale));
+    if(d<distance){distance=d;best=i}
+  });
+  if(best<0||distance>18)return;
+  experiment.state.selectedFlowPoint=best;
+  const single=flowRuntime.single[best],multi=flowRuntime.multi[best],track=tracks[best],f=n=>n.toFixed(1);
+  $('#flowPointInfo').textContent='Point #'+(best+1)+' · '+(isMulti?'Pyramidal':'Single-scale')+' LK: p = ('+f(track.x)+', '+f(track.y)+'), p′ = ('+f(track.x+track.u)+', '+f(track.y+track.v)+'), (u, v) = ('+f(track.u)+', '+f(track.v)+') px. Single-scale: '+(single.valid?'valid':'invalid')+'; pyramidal: '+(multi.valid?'valid':'invalid')+(flowRecovered(best)?'; recovered/improved by residual criterion':'')+'. Coordinates are in the original processing image; display scale '+(experiment.state.arrowScale??1)+'×.';
+  redrawFlowPanels();
 }
 
 function drawFlowPyramid(){
@@ -561,11 +605,13 @@ function computeOpticalFlow(experiment,token=flowRuntime.token){
   const {extraMotion,pyramidLevels,trackedPoints}=experiment.state;
   flowRuntime.frameA=makeFlowFrame(flowRuntime.img1,0);flowRuntime.frameB=makeFlowFrame(flowRuntime.img2,extraMotion);
   flowRuntime.points=detectFlowCorners(flowRuntime.frameA.gray,flowRuntime.frameA.w,flowRuntime.frameA.h,trackedPoints);
+  experiment.state.selectedFlowPoint=null;
+  $('#flowPointInfo').textContent='Click an arrow to inspect p, p′ and (u, v). White dots mark starts; colored dots mark estimated endpoints. Default scale: 1×.';
   flowRuntime.single=trackSingleFlow(flowRuntime.frameA,flowRuntime.frameB,flowRuntime.points);
   flowRuntime.multi=trackMultiFlow(flowRuntime.frameA,flowRuntime.frameB,flowRuntime.points,pyramidLevels);
   const multiBadge=$('#flowMulti')?.parentElement?.querySelector('.flow-badge');
   if(multiBadge)multiBadge.textContent=`${pyramidLevels+1} resolutions · coarse → fine`;
-  updateFlowMetrics();drawFlowPyramid();drawFlowPanel('flowSingle',flowRuntime.single,false,.9);drawFlowPanel('flowMulti',flowRuntime.multi,true,.9);state.output=$('#flowMulti');
+  updateFlowMetrics();drawFlowPyramid();redrawFlowPanels();state.output=$('#flowMulti');
   $('#flowStatus').textContent=`Ready · ${flowRuntime.points.length} shared points · extra motion ${extraMotion}px · same stressed input used for both LK variants.`;
 }
 
@@ -579,7 +625,7 @@ function animateOpticalFlow(timestamp,token){
   if(token!==flowRuntime.token||state.active!=='opticalFlow')return;
   const phase=(timestamp%1500)/1500,progress=.15+.85*(.5-.5*Math.cos(phase*Math.PI*2));
   drawOriginalFlowFrame(progress);
-  if(flowRuntime.ready){drawFlowPanel('flowSingle',flowRuntime.single,false,progress);drawFlowPanel('flowMulti',flowRuntime.multi,true,progress)}
+  // Comparison arrows remain fixed at their estimated displacements; only the source pair animates.
   flowRuntime.raf=requestAnimationFrame(next=>animateOpticalFlow(next,token));
 }
 
