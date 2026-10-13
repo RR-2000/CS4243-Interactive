@@ -1,4 +1,4 @@
-// Lecture 7 · Local features I: keypoints — slide 27, "(Simple) Non-Maximum Suppression".
+// Lecture 7 · Local features I: keypoints — slide 25, "(Simple) Non-Maximum Suppression".
 // Self-contained: a real Harris response of a synthetic checkerboard, then greedy NMS
 // (take the global max, record it, zero its window, repeat) shown step by step.
 
@@ -312,7 +312,7 @@ const LEGEND=`<div class="nms-legend"><span><i class="nms-key-kp">✱</i>keypoin
 function mountNms(experiment,root,runtime,token){
   const s=experiment.state={...DEFAULTS,...experiment.state};
   root.innerHTML=`<div class="l4-page nms-page">
-  <section class="l4-section"><header><span>Slide 27</span><h2>(Simple) non-maximum suppression on the Harris response</h2><p>The Harris operator scores how corner-like every pixel is, so each corner shows up as a small blob of high values rather than one pixel. Simplest approach: iteratively search for the max value, keep it, then zero out everything in the surrounding window. Step through it on one blob, exactly as on the slide.</p></header>
+  <section class="l4-section"><header><span>Slide 25</span><h2>(Simple) non-maximum suppression on the Harris response</h2><p>The Harris operator scores how corner-like every pixel is, so each corner shows up as a small blob of high values rather than one pixel. Simplest approach: iteratively search for the max value, keep it, then zero out everything in the surrounding window. Step through it on one blob, exactly as on the slide.</p></header>
     <div class="controls nms-controls">${controlRange('nmsWindow','Window size (w × w)',3,55,s.window,2)}${controlRange('nmsThreshold','Stop threshold (of 99)',1,60,s.threshold)}${controlRange('nmsMax','Max keypoints (top N)',1,250,s.maxKeypoints)}</div>
     <div class="l4-presets nms-presets" role="group" aria-label="Window size presets"><span>Window presets</span>${PRESETS.map(item=>`<button type="button" data-window="${item.window}">${item.label} · ${item.window} × ${item.window}</button>`).join('')}</div>
     <div class="nms-explorer">
@@ -323,7 +323,7 @@ function mountNms(experiment,root,runtime,token){
     <div class="nms-stats" id="nmsStats"></div>
     ${LEGEND}
   </section>
-  <section class="l4-section"><header><span>Speaker notes · slide 27</span><h2>The window size is a hyperparameter</h2><p>Same Harris response, same stop threshold (${DEFAULTS.threshold}) and limit (${DEFAULTS.maxKeypoints}); only the window changes. Each case shows the response before NMS (with one window drawn at the strongest corner) and the maxima that survive greedy NMS.</p></header>
+  <section class="l4-section"><header><span>Speaker notes · slide 25</span><h2>The window size is a hyperparameter</h2><p>Same Harris response, same stop threshold (${DEFAULTS.threshold}) and limit (${DEFAULTS.maxKeypoints}); only the window changes. Each case shows the response before NMS (with one window drawn at the strongest corner) and the maxima that survive greedy NMS.</p></header>
     <div class="nms-cases">${CASES.map(caseMarkup).join('')}</div>
     ${CASE_LEGEND}
   </section></div>`;

@@ -1,10 +1,11 @@
 import {createLecture4Experiments} from './lecture4.js?v=18';
-import {createNmsExperiment,nmsGuide,NMS_PYTHON_SAMPLE} from './nms.js?v=1';
+import {createNmsExperiment,nmsGuide,NMS_PYTHON_SAMPLE} from './nms.js?v=2';
+import {createLecture8Experiments,siftGuide,ratioGuide,SIFT_PYTHON_SAMPLE,RATIO_PYTHON_SAMPLE} from './lecture8.js?v=1';
 
 (()=>{
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const clamp=(v,a=0,b=255)=>Math.max(a,Math.min(b,v));
-const state={source:document.createElement('canvas'),name:'Sample image',size:null,active:'channels',output:null};
+const state={source:document.createElement('canvas'),name:'Sample image',size:null,url:null,version:0,active:'channels',output:null};
 const root=$('#experimentRoot');
 
 function fit(w,h,max=1200){const s=Math.min(1,max/Math.max(w,h));return [Math.round(w*s),Math.round(h*s)]}
@@ -49,7 +50,7 @@ const experiments=[
 {group:'Color & intensity',id:'standardize',icon:'↕',title:'Image standardization (L2)',description:'Subtract the mean, divide by standard deviation, then scale the standardized values.',state:{scale:32},mount(){root.innerHTML=`<div class="controls">${controlRange('stdScale','Scaling coefficient',1,100,this.state.scale)}</div><div class="results">${card('stdOriginal','Original')}${card('stdOutput','Standardized')}</div><div class="stats"><div class="stat"><small>Input mean</small><b id="inMean">—</b></div><div class="stat"><small>Input σ</small><b id="inStd">—</b></div><div class="stat"><small>Mapping</small><b id="mapping">128 + αz</b></div></div>`;bindRange('stdScale',v=>{this.state.scale=v;this.render()});this.render()},render(){canvas('stdOriginal');const src=grayData(),n=src.width*src.height;let sum=0;for(let i=0;i<src.data.length;i+=4)sum+=src.data[i];const mean=sum/n;let variance=0;for(let i=0;i<src.data.length;i+=4)variance+=(src.data[i]-mean)**2;const sd=Math.sqrt(variance/n)||1,out=new ImageData(new Uint8ClampedArray(src.data),src.width,src.height);for(let i=0;i<out.data.length;i+=4){const v=clamp(128+this.state.scale*(src.data[i]-mean)/sd);out.data[i]=out.data[i+1]=out.data[i+2]=v}put('stdOutput',out);$('#inMean').textContent=mean.toFixed(2);$('#inStd').textContent=sd.toFixed(2);$('#mapping').textContent=`128 + ${this.state.scale}z`}},
 {group:'Color & intensity',id:'gamma',icon:'γ',title:'Gamma mapping (L2)',description:'Apply the power-law mapping output = 255 × (input / 255)ᵞ.',state:{gamma:1},mount(){root.innerHTML=`<div class="controls">${controlRange('gamma','Gamma',.1,4,this.state.gamma,.05)}</div><div class="results">${card('gammaOriginal','Original')}${card('gammaOutput','Gamma mapped')}</div>`;bindRange('gamma',v=>{this.state.gamma=v;this.render()},v=>(+v).toFixed(2));this.render()},render(){canvas('gammaOriginal');const src=sourceData(),out=new ImageData(new Uint8ClampedArray(src.data),src.width,src.height);for(let i=0;i<out.data.length;i+=4){out.data[i]=255*(src.data[i]/255)**this.state.gamma;out.data[i+1]=255*(src.data[i+1]/255)**this.state.gamma;out.data[i+2]=255*(src.data[i+2]/255)**this.state.gamma}put('gammaOutput',out)}},
 {group:'Histograms',id:'histogram',icon:'▥',title:'B/W and histogram (L2)',description:'Convert to grayscale and compare stretching or histogram equalization.',state:{mode:'plain'},mount(){root.innerHTML=`<div class="controls">${segment('histMode',[['plain','Grayscale'],['stretch','Histogram stretching'],['equalize','Histogram equalization']],this.state.mode)}</div><div class="hist-layout"><div class="results">${card('histOriginal','Original')}${card('histOutput','Output')}</div><div class="hist-panel"><h3>Output intensity distribution</h3><canvas class="histogram" id="histChart"></canvas><div class="hist-labels"><span>0 · black</span><span>255 · white</span></div><div class="stats"><div class="stat"><small>Minimum</small><b id="histMin">—</b></div><div class="stat"><small>Maximum</small><b id="histMax">—</b></div></div></div></div>`;bindSegment('histMode',v=>{this.state.mode=v;this.render()});this.render()},render(){canvas('histOriginal');const gray=grayData(),h=histogram(gray),out=new ImageData(new Uint8ClampedArray(gray.data),gray.width,gray.height);let min=h.findIndex(v=>v),max=255-[...h].reverse().findIndex(v=>v);if(this.state.mode==='stretch'){for(let i=0;i<out.data.length;i+=4){const v=(gray.data[i]-min)*255/Math.max(1,max-min);out.data[i]=out.data[i+1]=out.data[i+2]=v}}else if(this.state.mode==='equalize'){let acc=0;const n=gray.width*gray.height,cdf=h.map(v=>(acc+=v)/n*255);for(let i=0;i<out.data.length;i+=4)out.data[i]=out.data[i+1]=out.data[i+2]=cdf[gray.data[i]]}put('histOutput',out);const oh=histogram(out);drawHistogram('histChart',oh);$('#histMin').textContent=oh.findIndex(v=>v);$('#histMax').textContent=255-[...oh].reverse().findIndex(v=>v)}},
-{group:'Compression & selection',id:'jpeg',icon:'≋',title:'JPEG compression (L1)',description:'Change JPEG quality and inspect file size and compression artifacts.',state:{quality:72},mount(){root.innerHTML=`<div class="controls">${controlRange('jpegQuality','Quality',1,100,this.state.quality)}</div><div class="results">${card('jpegOriginal','Original')}${card('jpegOutput','Compressed','Encoding…')}</div><div class="stats"><div class="stat"><small>JPEG size</small><b id="jpegSize">—</b></div><div class="stat"><small>Bytes per pixel</small><b id="jpegBpp">—</b></div><div class="stat"><small>Raw size reduction</small><b id="jpegSave">—</b></div></div>`;bindRange('jpegQuality',v=>{this.state.quality=v;this.render()},v=>v+'%');this.render()},render(){canvas('jpegOriginal');clearTimeout(this.timer);this.timer=setTimeout(()=>state.source.toBlob(async blob=>{if(!blob||state.active!=='jpeg')return;const b=await createImageBitmap(blob),c=$('#jpegOutput');c.width=b.width;c.height=b.height;c.getContext('2d').drawImage(b,0,0);b.close();const raw=state.source.width*state.source.height*3;$('#jpegSize').textContent=formatBytes(blob.size);$('#jpegBpp').textContent=(blob.size/(state.source.width*state.source.height)).toFixed(2);$('#jpegSave').textContent=(100-blob.size/raw*100).toFixed(1)+'%';$('.card:nth-child(2) figcaption small').textContent=formatBytes(blob.size);state.output=c},'image/jpeg',this.state.quality/100),80)}},
+{group:'Compression & selection',id:'jpeg',icon:'≋',title:'JPEG compression (L1)',description:'Change JPEG quality and inspect file size and compression artifacts.',state:{quality:72},mount(){root.innerHTML=`<div class="controls">${controlRange('jpegQuality','Quality',1,100,this.state.quality)}</div><div class="results">${card('jpegOriginal','Original')}${card('jpegOutput','Compressed','Encoding…')}</div><div class="stats"><div class="stat"><small>JPEG size</small><b id="jpegSize">—</b></div><div class="stat"><small>Bytes per pixel</small><b id="jpegBpp">—</b></div><div class="stat"><small>Raw size reduction</small><b id="jpegSave">—</b></div></div>`;bindRange('jpegQuality',v=>{this.state.quality=v;this.render()},v=>v+'%');this.render()},render(){canvas('jpegOriginal');clearTimeout(this.timer);this.timer=setTimeout(()=>state.source.toBlob(async blob=>{if(!blob||state.active!=='jpeg')return;const b=await createImageBitmap(blob),c=$('#jpegOutput');if(!c||state.active!=='jpeg'){b.close();return}c.width=b.width;c.height=b.height;c.getContext('2d').drawImage(b,0,0);b.close();const raw=state.source.width*state.source.height*3;$('#jpegSize').textContent=formatBytes(blob.size);$('#jpegBpp').textContent=(blob.size/(state.source.width*state.source.height)).toFixed(2);$('#jpegSave').textContent=(100-blob.size/raw*100).toFixed(1)+'%';$('.card:nth-child(2) figcaption small').textContent=formatBytes(blob.size);state.output=c},'image/jpeg',this.state.quality/100),80)}},
 {group:'Compression & selection',id:'selection',icon:'⌖',title:'Color selection (L1)',description:'Pick a pixel and highlight nearby colors using RGB distance.',state:{color:[239,92,73],tol:40,mode:'isolate',point:null},mount(){root.innerHTML=`<div class="controls">${controlRange('colorTol','Tolerance',1,180,this.state.tol)}<div class="control narrow"><span class="control-label">Mode</span>${segment('selectMode',[['isolate','Isolate'],['overlay','Overlay'],['mask','Mask']],this.state.mode)}</div><div class="control narrow"><span class="control-label">Selected color</span><div class="color-chip" id="colorChip"></div></div></div><div class="results"><div class="picker">${card('selectInput','Click to select a color')}</div>${card('selectOutput','Selection')}</div><div class="stats"><div class="stat"><small>Selected RGB</small><b id="selectedRgb">—</b></div><div class="stat"><small>Pixels matched</small><b id="matchRate">—</b></div></div>`;bindRange('colorTol',v=>{this.state.tol=v;this.render()});bindSegment('selectMode',v=>{this.state.mode=v;this.render()});$('#selectInput').addEventListener('click',e=>this.pick(e));this.render()},pick(e){const c=$('#selectInput'),r=c.getBoundingClientRect(),x=clamp(Math.floor((e.clientX-r.left)/r.width*c.width),0,c.width-1),y=clamp(Math.floor((e.clientY-r.top)/r.height*c.height),0,c.height-1),d=state.source.getContext('2d').getImageData(x,y,1,1).data;this.state.color=[d[0],d[1],d[2]];this.render()},render(){canvas('selectInput');const src=sourceData(),out=new ImageData(new Uint8ClampedArray(src.data),src.width,src.height),[tr,tg,tb]=this.state.color;let n=0;for(let i=0;i<out.data.length;i+=4){const hit=Math.hypot(src.data[i]-tr,src.data[i+1]-tg,src.data[i+2]-tb)<=this.state.tol;if(hit)n++;if(this.state.mode==='isolate'&&!hit){const y=(src.data[i]+src.data[i+1]+src.data[i+2])/3*.22;out.data[i]=out.data[i+1]=out.data[i+2]=y}else if(this.state.mode==='overlay'&&hit){out.data[i]=255;out.data[i+1]=210;out.data[i+2]=20}else if(this.state.mode==='mask'){const v=hit?255:0;out.data[i]=out.data[i+1]=out.data[i+2]=v}}put('selectOutput',out);$('#colorChip').style.background=`rgb(${tr},${tg},${tb})`;$('#selectedRgb').textContent=`${tr}, ${tg}, ${tb}`;$('#matchRate').textContent=(n/(src.width*src.height)*100).toFixed(1)+'%'}},
 {group:'Spatial operations',id:'filters',icon:'⊞',title:'Spatial filters (L2)',description:'Apply neighborhood filters with configurable kernel, stride, and border padding.',state:{type:'median',kernel:3,stride:1,padding:'copy',sigma:1},mount(){root.innerHTML=`<div class="controls"><div class="control"><label>Filter</label><select id="filterType"><option value="median">Median</option><option value="max">Maximum</option><option value="gaussian">Gaussian</option><option value="box">Average / box</option></select></div><div class="control"><label>Kernel size</label><select id="kernel"><option>3</option><option>5</option><option>7</option><option>9</option></select></div><div class="control"><label>Stride</label><select id="stride"><option>1</option><option>2</option><option>3</option><option>4</option></select></div><div class="control"><label>Padding</label><select id="padding"><option value="zero">Zero padding</option><option value="copy">Copy padding</option></select></div><div class="control" id="sigmaControl">${controlRange('sigma','Gaussian σ',.2,5,this.state.sigma,.1)}</div></div><div class="results">${card('filterOriginal','Original')}${card('filterOutput','Filtered')}</div><div class="note" id="filterMeta"></div>`;['filterType','kernel','stride','padding'].forEach(id=>{$('#'+id).value=this.state[id==='filterType'?'type':id];$('#'+id).onchange=e=>{this.state[id==='filterType'?'type':id]=id==='filterType'||id==='padding'?e.target.value:+e.target.value;this.render()}});bindRange('sigma',v=>{this.state.sigma=v;this.render()},v=>(+v).toFixed(1));this.render()},render(){canvas('filterOriginal');$('#sigmaControl').style.display=this.state.type==='gaussian'?'block':'none';const work=document.createElement('canvas'),scale=Math.min(1,420/Math.max(state.source.width,state.source.height));work.width=Math.round(state.source.width*scale);work.height=Math.round(state.source.height*scale);work.getContext('2d').drawImage(state.source,0,0,work.width,work.height);const src=work.getContext('2d',{willReadFrequently:true}).getImageData(0,0,work.width,work.height),k=this.state.kernel,s=this.state.stride,p=Math.floor(k/2),ow=Math.ceil(src.width/s),oh=Math.ceil(src.height/s),out=new ImageData(ow,oh),idx=(x,y,c)=>((y*src.width+x)*4+c),sample=(x,y,c)=>{if(this.state.padding==='zero'&&(x<0||y<0||x>=src.width||y>=src.height))return 0;x=clamp(x,0,src.width-1);y=clamp(y,0,src.height-1);return src.data[idx(x,y,c)]};let weights=null;if(this.state.type==='gaussian'){weights=[];let total=0;for(let dy=-p;dy<=p;dy++)for(let dx=-p;dx<=p;dx++){const w=Math.exp(-(dx*dx+dy*dy)/(2*this.state.sigma**2));weights.push(w);total+=w}weights=weights.map(w=>w/total)}for(let oy=0;oy<oh;oy++)for(let ox=0;ox<ow;ox++){for(let c=0;c<3;c++){const vals=[];let weighted=0,wi=0;for(let dy=-p;dy<=p;dy++)for(let dx=-p;dx<=p;dx++){const v=sample(ox*s+dx,oy*s+dy,c);vals.push(v);if(weights)weighted+=v*weights[wi++]};let v;if(this.state.type==='median'){vals.sort((a,b)=>a-b);v=vals[Math.floor(vals.length/2)]}else if(this.state.type==='max')v=Math.max(...vals);else if(this.state.type==='gaussian')v=weighted;else v=vals.reduce((a,b)=>a+b,0)/vals.length;out.data[(oy*ow+ox)*4+c]=v}out.data[(oy*ow+ox)*4+3]=255}put('filterOutput',out);$('#filterMeta').textContent=`Processing resolution: ${src.width} × ${src.height}. Output: ${ow} × ${oh}. Kernel: ${k} × ${k}. Stride: ${s}. ${this.state.padding==='zero'?'Out-of-image samples are zero.':'Border samples copy the nearest pixel.'}`}},
 {group:'Lines & edges',id:'doglap',icon:'∇²',title:'DoG and Laplacian (L3)',description:'Compare Difference of Gaussians with the second-derivative Laplacian operator.',state:{mode:'dog',sigma:1,sigma2:2},mount(){root.innerHTML=`<div class="controls"><div class="control narrow"><span class="control-label">Operator</span>${segment('edgeOperator',[['dog','Difference of Gaussians'],['laplace','Laplacian']],this.state.mode)}</div>${controlRange('dogSigma','σ₁',.4,4,this.state.sigma,.1)}<div id="sigmaTwo" class="control">${controlRange('dogSigma2','σ₂',.5,7,this.state.sigma2,.1)}</div></div><div class="results">${card('dogOriginal','Original')}${card('dogOutput','Edge response')}</div><div class="note" id="dogNote"></div>`;bindSegment('edgeOperator',v=>{this.state.mode=v;this.render();renderParameterGuide('doglap')});bindRange('dogSigma',v=>{this.state.sigma=v;this.render()},v=>(+v).toFixed(1));bindRange('dogSigma2',v=>{this.state.sigma2=v;this.render()},v=>(+v).toFixed(1));this.render()},render(){canvas('dogOriginal');const dog=this.state.mode==='dog',sigmaOne=$('#dogSigma').closest('.control'),sigmaTwo=$('#sigmaTwo');sigmaOne.hidden=!dog;sigmaTwo.hidden=!dog;const g=workingGray(520);let values;if(dog){const a=gaussian(g.data,g.w,g.h,this.state.sigma),b=gaussian(g.data,g.w,g.h,Math.max(this.state.sigma+.1,this.state.sigma2));values=new Float32Array(a.length);for(let i=0;i<a.length;i++)values[i]=a[i]-b[i];$('#dogNote').textContent='DoG uses σ₁ and σ₂ to create two Gaussian blurs, then subtracts the wider blur from the narrower blur.'}else{values=convolveGray(g.data,g.w,g.h,[0,1,0,1,-4,1,0,1,0],3);$('#dogNote').textContent='Plain Laplacian uses the fixed 3 × 3 kernel [[0, 1, 0], [1, −4, 1], [0, 1, 0]]. It does not use σ₁ or σ₂.'}scalarImage('dogOutput',values,g.w,g.h,true)}},
@@ -79,6 +80,17 @@ const experiments=[
   destroy(){destroyHarris()}
 },
 createNmsExperiment(root),
+{
+  group:'Local features',
+  id:'anms',
+  icon:'◌',
+  title:'Adaptive non-maximum suppression (L7)',
+  description:'Keep the corners with the largest suppression radii instead of the strongest responses, so the same keypoint budget covers the whole image.',
+  state:{budget:250,robustness:1.1,selected:null},
+  mount(){mountAnms(this)},
+  destroy(){destroyAnms()}
+},
+...createLecture8Experiments(root,{getSource:()=>state.source,getSourceVersion:()=>state.version}),
 {
   group:'Motion',
   id:'opticalFlow',
@@ -592,7 +604,8 @@ const harrisRuntime={token:0,raf:0,view:null,firstKey:'',first:null,secondKey:''
 function mountHarris(experiment){
   destroyHarris();
   const token=harrisRuntime.token,s=experiment.state;
-  root.innerHTML=`<div class="controls harris-controls">
+  if(ensureNaturalPhoto('images/spanish steps.jpeg'))return;
+  root.innerHTML=`${photoChooser('harrisPhotos')}<div class="controls harris-controls">
     ${controlRange('harrisSigma','σ · Gaussian window',.5,4,s.sigma,.25)}
     ${controlRange('harrisK','k · trace weight',.02,.2,s.k,.005)}
     ${controlRange('harrisThreshold','Threshold · % of max R',.1,10,s.threshold,.1)}
@@ -651,6 +664,7 @@ function mountHarris(experiment){
   </div>
   <div class="note">Filled dots were found in both views; rings were found in only one. R depends only on the eigenvalues of M, so rotating the image moves its corners with it, up to resampling error. Adding a constant brightness changes no derivative, but multiplying contrast by a multiplies R by a⁴, so a fixed threshold drops the weaker corners. The window σ is fixed in pixels, so zooming changes which structures look like corners: Harris is not scale invariant.</div>`;
 
+  bindPhotoChooser('harrisPhotos');
   const update=()=>scheduleHarrisRender(experiment,token);
   HARRIS_CONTROLS.forEach(([id,key,format])=>bindRange(id,value=>{s[key]=value;update()},format));
   syncHarrisControls(s);
@@ -923,6 +937,151 @@ function renderHarris(experiment){
   $$('#harrisPresets button').forEach(button=>{const preset=HARRIS_VIEW_PRESETS[button.dataset.harrisPreset];button.classList.toggle('active',Object.keys(preset).every(key=>preset[key]===s[key]))});
   $('#harrisStatus').textContent=`${count} corners from ${firstPeaks.candidateCount.toLocaleString()} candidates · updated in ${Math.round(performance.now()-started)} ms`;
   state.output=$('#harrisPost');
+}
+
+// Photographs offered directly on the keypoint pages; choosing one replaces the toolbar image.
+const PHOTO_CHOICES=[
+  {url:'images/spanish steps.jpeg',thumb:'images/thumbs/spanish-steps.jpg',label:'Spanish Steps'},
+  {url:'images/utown_crop.png',thumb:'images/thumbs/utown.jpg',label:'UTown towers'},
+  {url:'images/cove.jpg',thumb:'images/thumbs/cove.jpg',label:'Cove'},
+  {url:'images/Corridor_crop.png',thumb:'images/thumbs/corridor.jpg',label:'Corridor'},
+  {url:'images/Screenshot 2026-07-29 at 09.39.17.png',thumb:'images/thumbs/giraffe.jpg',label:'Giraffe'},
+  {url:'images/Plains_Zebra_Equus_quagga_cropped.jpg',thumb:'images/thumbs/zebra.jpg',label:'Zebra'},
+  {url:'images/lecture4/scale/sunflowers.jpg',thumb:'images/thumbs/sunflowers.jpg',label:'Sunflowers'}
+];
+let naturalPhotoApplied=false;
+
+function photoChooser(id){
+  return `<div class="photo-chooser" id="${id}" role="group" aria-label="Choose the image"><span>Image</span>${PHOTO_CHOICES.map(photo=>`<button type="button" data-url="${photo.url}" class="${state.url===photo.url?'active':''}" aria-pressed="${state.url===photo.url}"><img src="${photo.thumb}" alt="" loading="lazy"><em>${photo.label}</em></button>`).join('')}<button type="button" data-action="sample" class="${state.url==='sample'?'active':''}" aria-pressed="${state.url==='sample'}"><b>CV</b><em>Synthetic</em></button><button type="button" data-action="upload"><b>⤒</b><em>Upload…</em></button></div>`;
+}
+function bindPhotoChooser(id){
+  $('#'+id).onclick=event=>{
+    const button=event.target.closest('button');if(!button)return;
+    if(button.dataset.url){if(button.dataset.url!==state.url)loadBundledImage(button.dataset.url,null,PHOTO_CHOICES.find(photo=>photo.url===button.dataset.url)?.label)}
+    else if(button.dataset.action==='sample'){if(state.url!=='sample')sample()}
+    else $('#fileInput').click();
+  };
+}
+// The built-in synthetic sample has too few corners for these pages, so the first visit swaps in
+// a photograph once; afterwards the user's choice, including the synthetic sample, is kept.
+function ensureNaturalPhoto(url){
+  if(naturalPhotoApplied||state.url!=='sample')return false;
+  naturalPhotoApplied=true;
+  root.innerHTML='<div class="note">Loading a photograph…</div>';
+  loadBundledImage(url,null,PHOTO_CHOICES.find(photo=>photo.url===url)?.label).catch(error=>{console.warn(error);activeExperiment()?.mount()});
+  return true;
+}
+
+const ANMS_WORKING_SIZE=480;
+const ANMS_GRID=[8,6];
+const anmsRuntime={token:0,view:null,points:null,order:null,radii:null,suppressor:null,robustness:null};
+
+function mountAnms(experiment){
+  destroyAnms();
+  if(ensureNaturalPhoto('images/cove.jpg'))return;
+  const s=experiment.state;
+  root.innerHTML=`${photoChooser('anmsPhotos')}
+  <div class="controls">
+    ${controlRange('anmsBudget','Keypoints kept · N',50,600,s.budget,10)}
+    ${controlRange('anmsRobust','“Significantly stronger” factor · c',1,1.5,s.robustness,.05)}
+  </div>
+  <div class="anms-intro">
+    <section class="gabor-formula anms-formula" aria-label="Suppression radius">
+      <span class="gabor-kicker">Slide 26 · Brown, Szeliski &amp; Winder 2005</span>
+      <div class="gabor-equation"><i>r<sub>i</sub></i> = min<sub><i>j</i> : <i>R<sub>j</sub></i> &gt; <i>c R<sub>i</sub></i></sub> ‖<b>x</b><sub><i>i</i></sub> − <b>x</b><sub><i>j</i></sub>‖</div>
+      <p>Candidates are Harris local maxima (3 × 3 neighborhood, R above 0.01% of the strongest response, at least 6 px from the border). A candidate’s radius is the distance to the nearest <b>significantly stronger</b> candidate, one whose response exceeds c times its own. ANMS keeps the N candidates with the largest radii. Points that no candidate beats by a factor c, including the strongest corner, get r = ∞ and are always kept. With larger c only a much stronger neighbor can suppress a point, so corners of similar strength survive side by side and the spread becomes less even; c = 1 spaces the points most evenly.</p>
+    </section>
+    <section class="harris-inspector anms-inspector" aria-live="polite"><header><b>Selected candidate</b><small id="anmsPickMeta">click a point in any panel</small></header><p class="harris-verdict" id="anmsPickText">Click a point in any panel.</p><p class="anms-key">In (c) and (d) the dashed circle is the selected point’s suppression radius and the line joins it to the stronger candidate that sets it. In every panel a yellow ring means that panel keeps the selected point and a red ring means it drops it.</p></section>
+  </div>
+  <div class="gabor-section-title harris-section-title"><div><b>Strongest N versus adaptive NMS</b><small>All four panels use the same Harris candidates; click any point to inspect it. Grid coverage counts how many of the ${ANMS_GRID[0]} × ${ANMS_GRID[1]} image cells contain at least one keypoint. Coordinates and radii are in pixels of the working image.</small></div><span id="anmsStatus" role="status">Computing…</span></div>
+  <div class="note anms-warning" id="anmsWarning" hidden></div>
+  <div class="results four picker" id="anmsPanels">
+    ${card('anmsStrongA','(a) Strongest N','—')}
+    ${card('anmsStrongB','(b) Strongest 2N','—')}
+    ${card('anmsAdaptA','(c) ANMS N','—')}
+    ${card('anmsAdaptB','(d) ANMS 2N','—')}
+  </div>
+  <div class="note">Selecting only the strongest responses piles keypoints onto high-contrast texture such as foliage and rocks and leaves smooth regions empty. ANMS spreads the same budget across the image, which gives later matching and alignment more evenly distributed constraints. The radius r in each ANMS caption is the smallest radius that still made the cut.</div>`;
+  bindPhotoChooser('anmsPhotos');
+  bindRange('anmsBudget',value=>{s.budget=value;renderAnms(experiment)});
+  bindRange('anmsRobust',value=>{s.robustness=value;renderAnms(experiment)},value=>(+value).toFixed(2));
+  $('#anmsRobustOut').textContent=s.robustness.toFixed(2);
+  $('#anmsPanels').addEventListener('click',event=>{
+    const target=event.target.closest('canvas');if(!target||!anmsRuntime.points||!['anmsAdaptA','anmsAdaptB','anmsStrongA','anmsStrongB'].includes(target.id))return;
+    const rect=target.getBoundingClientRect(),view=anmsRuntime.view,x=(event.clientX-rect.left)/rect.width*view.w,y=(event.clientY-rect.top)/rect.height*view.h,shown=anmsShown(target.id,experiment.state);
+    let best=-1,distance=14;shown.forEach(i=>{const p=anmsRuntime.points[i],d=Math.hypot(p.x-x,p.y-y);if(d<distance){distance=d;best=i}});
+    if(best>=0){s.selected={x:anmsRuntime.points[best].x,y:anmsRuntime.points[best].y};renderAnms(experiment)}
+  });
+  renderAnms(experiment);
+}
+
+function destroyAnms(){anmsRuntime.token++;Object.assign(anmsRuntime,{view:null,points:null,order:null,radii:null,suppressor:null,robustness:null})}
+
+function prepareAnms(){
+  const g=workingGray(ANMS_WORKING_SIZE),gray=new Float32Array(g.data.length);
+  for(let i=0;i<gray.length;i++)gray[i]=g.data[i]/255;
+  const field=harrisResponse(gray,g.w,g.h,1.5,.05),margin=6;
+  // Candidates are Harris local maxima in a 3 x 3 neighborhood above 0.01% of the strongest response,
+  // low enough that weak but isolated corners in smooth regions are available to ANMS.
+  const points=harrisPeaks(field.response,g.w,g.h,1e-4*field.maxResponse,1,(x,y)=>Math.min(x,y,g.w-1-x,g.h-1-y)>=margin).corners;
+  points.sort((a,b)=>b.response-a.response);
+  return{view:{canvas:g.canvas,w:g.w,h:g.h},points:points.slice(0,4000)};
+}
+
+// Points are sorted by decreasing response, so the significantly stronger set is a prefix.
+function suppressionRadii(points,robustness){
+  const n=points.length,radii=new Float64Array(n),suppressor=new Int32Array(n).fill(-1);
+  for(let i=0;i<n;i++){
+    const threshold=robustness*points[i].response;let best=Infinity,who=-1;
+    for(let j=0;j<n&&points[j].response>threshold;j++){const d=Math.hypot(points[i].x-points[j].x,points[i].y-points[j].y);if(d<best){best=d;who=j}}
+    radii[i]=best;suppressor[i]=who;
+  }
+  const order=Array.from({length:n},(_,i)=>i).sort((a,b)=>radii[b]-radii[a]||points[b].response-points[a].response);
+  return{radii,suppressor,order};
+}
+
+function anmsShown(id,s){
+  const n=anmsRuntime.points.length,N=Math.min(s.budget,n),N2=Math.min(2*s.budget,n),strongest=k=>Array.from({length:k},(_,i)=>i);
+  return{anmsStrongA:strongest(N),anmsStrongB:strongest(N2),anmsAdaptA:anmsRuntime.order.slice(0,N),anmsAdaptB:anmsRuntime.order.slice(0,N2)}[id];
+}
+
+function anmsCoverage(indices){
+  const [cols,rows]=ANMS_GRID,{w,h}=anmsRuntime.view,filled=new Set();
+  indices.forEach(i=>{const p=anmsRuntime.points[i];filled.add(Math.min(rows-1,Math.floor(p.y/h*rows))*cols+Math.min(cols-1,Math.floor(p.x/w*cols)))});
+  return filled.size/(cols*rows);
+}
+
+function renderAnms(experiment){
+  const s=experiment.state,started=performance.now();
+  if(!anmsRuntime.view){const prepared=prepareAnms();anmsRuntime.view=prepared.view;anmsRuntime.points=prepared.points}
+  if(anmsRuntime.robustness!==s.robustness){Object.assign(anmsRuntime,suppressionRadii(anmsRuntime.points,s.robustness));anmsRuntime.robustness=s.robustness}
+  // Start on the weakest corner that ANMS keeps: it shows why an isolated weak point survives.
+  if(!s.selected&&anmsRuntime.order.length){const kept=anmsRuntime.order.slice(0,Math.min(s.budget,anmsRuntime.points.length)),weakest=Math.max(...kept);s.selected={x:anmsRuntime.points[weakest].x,y:anmsRuntime.points[weakest].y}}
+  const {points,radii,suppressor,view}=anmsRuntime,n=points.length,selected=s.selected?points.reduce((best,p,i)=>{const d=Math.hypot(p.x-s.selected.x,p.y-s.selected.y);return d<best.d?{i,d}:best},{i:-1,d:2}).i:-1;
+  const panels=[['anmsStrongA',`(a) Strongest ${Math.min(s.budget,n)}`],['anmsStrongB',`(b) Strongest ${Math.min(2*s.budget,n)}`],['anmsAdaptA',`(c) ANMS ${Math.min(s.budget,n)}`],['anmsAdaptB',`(d) ANMS ${Math.min(2*s.budget,n)}`]];
+  panels.forEach(([id,title])=>{
+    const indices=anmsShown(id,s),adaptive=id.startsWith('anmsAdapt'),target=canvas(id,view.canvas),ctx=target.getContext('2d'),r=Math.max(2.2,view.w/190);
+    ctx.fillStyle='rgba(0,0,0,.25)';ctx.fillRect(0,0,view.w,view.h);
+    const keep=new Set(indices);
+    if(selected>=0&&adaptive&&Number.isFinite(radii[selected])){const p=points[selected],q=points[suppressor[selected]];ctx.setLineDash([5,4]);ctx.strokeStyle='#facc15';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x+.5,p.y+.5,radii[selected],0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(p.x+.5,p.y+.5);ctx.lineTo(q.x+.5,q.y+.5);ctx.stroke()}
+    indices.forEach(i=>{const p=points[i];ctx.beginPath();ctx.arc(p.x+.5,p.y+.5,r,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.lineWidth=1.2;ctx.strokeStyle='#111';ctx.stroke()});
+    if(selected>=0){const p=points[selected];ctx.beginPath();ctx.arc(p.x+.5,p.y+.5,r+3,0,Math.PI*2);ctx.lineWidth=2.5;ctx.strokeStyle=keep.has(selected)?'#facc15':'#ef4444';ctx.stroke()}
+    const coverage=anmsCoverage(indices),radius=adaptive&&indices.length?radii[indices.at(-1)]:null;
+    $('#'+id).closest('.card').querySelector('figcaption span').textContent=adaptive&&radius!=null?`${title}, r = ${Number.isFinite(radius)?radius.toFixed(1):'∞'}`:title;
+    setHarrisMeta(id,`coverage ${Math.round(coverage*100)}% of cells`);
+  });
+  if(selected>=0){
+    const p=points[selected],rank=anmsRuntime.order.indexOf(selected)+1,strength=selected+1;
+    $('#anmsPickMeta').textContent=`(${p.x}, ${p.y}) · response rank ${strength} · radius rank ${rank}`;
+    const text=$('#anmsPickText');
+    if(!Number.isFinite(radii[selected])){text.className='harris-verdict kept';text.textContent=selected===0?'This is the strongest candidate in the image: no other point is stronger, so r = ∞ and ANMS always keeps it.':`No candidate is more than ${s.robustness.toFixed(2)}× stronger than this one (the strongest is only ${(points[0].response/p.response).toFixed(2)}× stronger), so r = ∞ and ANMS always keeps it.`}
+    else{const q=points[suppressor[selected]],ratio=q.response/p.response,kept=rank<=Math.min(s.budget,n);text.className=`harris-verdict ${kept?'kept':'dropped'}`;text.textContent=`r = ${radii[selected].toFixed(1)} px: the nearest candidate with R > ${s.robustness.toFixed(2)} × R(this) is at (${q.x}, ${q.y}), ${ratio.toFixed(2)}× stronger. ${kept?`Its radius ranks ${rank}, inside the ANMS budget of ${Math.min(s.budget,n)}`:`Its radius ranks ${rank}, outside the ANMS budget of ${Math.min(s.budget,n)}`}${strength<=s.budget?`, and strongest-N keeps it too (response rank ${strength}).`:`, while strongest-N drops it (response rank ${strength}).`}`}
+  }
+  const ceiling=Math.round(anmsCoverage(points.map((_,i)=>i))*100),warning=$('#anmsWarning');
+  $('#anmsStatus').textContent=`${n.toLocaleString()} Harris candidates · all of them cover ${ceiling}% of cells · ${view.w} × ${view.h} px working image`;
+  warning.hidden=2*s.budget<n;
+  warning.textContent=Math.floor(n/2)<=50?`This image has only ${n} Harris candidates, too few for a meaningful comparison: even at the smallest N every panel shows ${2*50>=n?'all':'most'} of them. Choose a photograph.`:`This image has only ${n} Harris candidates, so ${s.budget>=n?'all four panels show every candidate':'panels (b) and (d) show every candidate'}. Lower N below ${Math.floor(n/2)} to compare the two selections.`;
+  state.output=$('#anmsAdaptA');
 }
 
 function heatColor(t){const stops=[[25,28,71],[38,90,170],[37,184,173],[245,210,72],[218,55,46]],x=t*(stops.length-1),i=Math.min(stops.length-2,Math.floor(x)),f=x-i;return stops[i].map((v,k)=>v+(stops[i+1][k]-v)*f)}
@@ -1982,6 +2141,28 @@ def harris_corners(image, sigma=1.5, k=0.05, threshold=0.01, nms_radius=4):
 
   greedyNms:NMS_PYTHON_SAMPLE,
 
+  anms:`import numpy as np
+from skimage.feature import corner_harris, peak_local_max
+
+def adaptive_nms(gray, n=250, c=1.1, sigma=1.5):
+    pad = int(4 * sigma) + 2  # edge padding, as on the Harris page
+    response = corner_harris(np.pad(gray, pad, mode="edge"), method="k", k=0.05, sigma=sigma)[pad:-pad, pad:-pad]
+    peaks = peak_local_max(response, min_distance=1, threshold_rel=1e-4, exclude_border=6)  # 3 x 3 maxima
+    strength = response[peaks[:, 0], peaks[:, 1]]
+    order = np.argsort(-strength)[:4000]
+    peaks, strength = peaks[order], strength[order]
+    radius = np.full(len(peaks), np.inf)
+    for i in range(len(peaks)):
+        stronger = strength > c * strength[i]        # significantly stronger candidates
+        if stronger.any():
+            radius[i] = np.linalg.norm(peaks[stronger] - peaks[i], axis=1).min()
+    keep = np.argsort(-radius, kind="stable")[:n]
+    return peaks[:n], peaks[keep], radius[keep[-1]]  # strongest n, ANMS n, its radius r`,
+
+  siftDescriptor:SIFT_PYTHON_SAMPLE,
+
+  ratioTest:RATIO_PYTHON_SAMPLE,
+
   opticalFlow:`import cv2
 import numpy as np
 
@@ -2065,6 +2246,9 @@ function guideFor(id){
   if(id==='gabor')return{overview:'The selected parameters define one complex member of a Gabor filter bank. Each grayscale texture is standardized, convolved with the raw real and imaginary kernel components using wrap boundaries, and shown as phase-invariant power. Response maps share one fixed display range, and the kernel preview uses one fixed spatial frame.',params:[param('Gamma',s.gamma.toFixed(2),'Controls the vertical aspect ratio of the Gaussian envelope. Gamma = 1 matches the circular envelope in the supplied Python reference; smaller values stretch it vertically.'),param('Sigma',s.sigma.toFixed(2),'Controls the Gaussian decay and therefore the spatial extent of the kernel.'),param('Omega',`${s.omega}°`,'Maps to theta in gabor_kernel and changes the preferred orientation of the sinusoidal carrier without changing the preview scale.'),param('Lambda',`${s.lambda.toFixed(1)} px`,'Sets frequency to 1 / lambda. Shorter wavelengths respond to finer texture cycles.'),param('Power','√(real² + imaginary²)','Combines the quadrature responses so the displayed magnitude does not depend on local phase.'),param('Display scales','Fixed','The response brightness range and the kernel preview’s pixel field are constant as parameters change.')],links:[link('Gabor filter',WIKI.gabor),link('Gabor filter banks for texture classification',WIKI.gaborBank)]};
   if(id==='harris')return{overview:'Steps 1–4 follow the slide: Sobel gradients at each pixel, a Gaussian-weighted second-moment matrix M for each window with cornerness R = det(M) − k·trace(M)², a threshold on R, then non-maximum suppression. Click a step image to inspect M and its eigenvalues at that window. The second view reuses the first view’s absolute threshold, so its corner counts are directly comparable.',params:[param('Window sigma',s.sigma.toFixed(2),'Standard deviation of the Gaussian window w(x, y) that sums Ix², IxIy, and Iy² into M. Larger windows average over larger structures and suppress fine texture.'),param('k',s.k.toFixed(3),'Weight of trace(M)² in R. Larger k requires the two eigenvalues to be more similar before R becomes positive; 0.04–0.06 is typical, and k ≥ 0.25 rejects every window.'),param('Threshold',`${s.threshold.toFixed(1)}% of max R`,'Step 3 keeps pixels whose R exceeds this fraction of the strongest first-view response. The resulting absolute value t is reused for the second view.'),param('NMS radius',`${s.nms} px`,'Step 4 keeps a candidate only if it has the largest R in its (2r + 1) × (2r + 1) neighborhood, which also sets the minimum spacing between corners.'),param('Second view',`${s.rotation}° · ${s.scale}% · contrast ${s.contrast}%`,`Rotates, rescales, and changes the contrast of the loaded image before running the identical detector. Repeatability is the share of first-view corners that land inside the second view and have a second-view corner within ${HARRIS_MATCH_TOLERANCE} px of their transformed position.`)],links:[link('Harris corner detector',WIKI.harris),link('Structure tensor',WIKI.structureTensor),link('Corner detection',WIKI.cornerDetection),link('Non-maximum suppression',WIKI.harrisNms)]};
   if(id==='greedyNms')return nmsGuide(s);
+  if(id==='anms')return{overview:'Candidates are Harris corners (σ = 1.5, k = 0.05) that are local maxima in a 3 × 3 neighborhood, with R above 0.01% of the maximum, at least 6 px from the border, capped at the strongest 4000. Strongest-N sorts them by response; adaptive NMS sorts them by suppression radius, the distance to the nearest candidate whose response exceeds c times their own.',params:[param('Keypoints kept',`N = ${s.budget}`,'The keypoint budget. Panels (a) and (c) keep N points; panels (b) and (d) keep 2N, as on the slide.'),param('Robustness factor',`c = ${s.robustness.toFixed(2)}`,'A neighbor suppresses a candidate only if its response exceeds c times the candidate’s. Brown et al. write the condition as f(xᵢ) < 0.9 f(xⱼ), which is c ≈ 1.1 here: only a clearly stronger neighbor counts. Larger c keeps more similar-strength neighbors side by side.'),param('Radius r','smallest kept radius','The caption of each ANMS panel reports the N-th largest suppression radius: every kept point is at least r away from any candidate more than c times stronger. At c = 1 this is also the minimum spacing between kept points.')],links:[link('Brown, Szeliski and Winder 2005 (MOPS)','https://www.microsoft.com/en-us/research/publication/multi-image-matching-using-multi-scale-oriented-patches/'),link('Szeliski: Computer Vision, 2nd ed.','https://szeliski.org/Book/'),link('Harris corner detector',WIKI.harris),link('Non-maximum suppression',WIKI.harrisNms)]};
+  if(id==='siftDescriptor')return siftGuide(s);
+  if(id==='ratioTest')return ratioGuide(s);
   if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants. Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',s.pyramidLevels,'Adds coarser resolutions before the full-resolution refinement. The display shows one more resolution than the number of downsampling steps.'),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
   return null;
 }
@@ -2137,17 +2321,19 @@ function mount(id){
   e.mount();renderParameterGuide(e.id);renderPseudocode(e.id);
 }
 function buildNav(){let group='';$('#experimentNav').innerHTML=experiments.map(e=>{const g=e.group!==group?`<div class="nav-group">${group=e.group}</div>`:'';return `${g}<button class="nav-button" data-id="${e.id}"><i>${e.icon}</i><span>${e.title}</span></button>`}).join('');$('#experimentNav').onclick=e=>{const b=e.target.closest('.nav-button');if(b)mount(b.dataset.id)}}
-function sample(){const c=state.source;c.width=1000;c.height=700;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,1000,700);g.addColorStop(0,'#f2c94c');g.addColorStop(.5,'#ed654e');g.addColorStop(1,'#3769da');x.fillStyle='#e7e7e1';x.fillRect(0,0,1000,700);x.fillStyle=g;x.fillRect(55,55,890,590);x.fillStyle='#17191d';x.fillRect(100,110,330,480);x.fillStyle='#f5c94c';x.beginPath();x.arc(715,260,145,0,Math.PI*2);x.fill();x.fillStyle='#3569db';x.beginPath();x.arc(755,455,105,0,Math.PI*2);x.fill();x.fillStyle='#ed5c49';x.fillRect(360,285,265,190);x.fillStyle='#fff';x.font='700 65px Arial';x.fillText('CV',155,280);x.fillText('LAB',125,365);state.name='Sample image';state.size=null;sourceChanged()}
-function sourceChanged(){const template=experiments.find(e=>e.id==='template');template.state.rect=null;template.state.drag=null;experiments.find(e=>e.id==='harris').state.probe=null;const c=$('#thumb');c.width=44;c.height=44;const crop=Math.min(state.source.width,state.source.height);c.getContext('2d').drawImage(state.source,(state.source.width-crop)/2,(state.source.height-crop)/2,crop,crop,0,0,44,44);$('#fileName').textContent=state.name;$('#imageMeta').textContent=`${state.source.width} × ${state.source.height}${state.size?' · '+formatBytes(state.size):''}`;const experiment=activeExperiment();experiment?.destroy?.();experiment?.mount();if(experiment){renderParameterGuide(experiment.id);renderPseudocode(experiment.id)}}
-async function load(file){if(!file?.type.startsWith('image/'))return;const b=await createImageBitmap(file),[w,h]=fit(b.width,b.height);state.source.width=w;state.source.height=h;state.source.getContext('2d').drawImage(b,0,0,w,h);b.close();state.name=file.name;state.size=file.size;sourceChanged()}
-async function loadBundledImage(url,button){
-  const image=new Image();
-  image.src=url;
-  await image.decode();
+function sample(){imageRequest++;state.url='sample';const c=state.source;c.width=1000;c.height=700;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,1000,700);g.addColorStop(0,'#f2c94c');g.addColorStop(.5,'#ed654e');g.addColorStop(1,'#3769da');x.fillStyle='#e7e7e1';x.fillRect(0,0,1000,700);x.fillStyle=g;x.fillRect(55,55,890,590);x.fillStyle='#17191d';x.fillRect(100,110,330,480);x.fillStyle='#f5c94c';x.beginPath();x.arc(715,260,145,0,Math.PI*2);x.fill();x.fillStyle='#3569db';x.beginPath();x.arc(755,455,105,0,Math.PI*2);x.fill();x.fillStyle='#ed5c49';x.fillRect(360,285,265,190);x.fillStyle='#fff';x.font='700 65px Arial';x.fillText('CV',155,280);x.fillText('LAB',125,365);state.name='Sample image';state.size=null;sourceChanged()}
+function sourceChanged(){state.version++;const template=experiments.find(e=>e.id==='template');template.state.rect=null;template.state.drag=null;experiments.find(e=>e.id==='harris').state.probe=null;experiments.find(e=>e.id==='anms').state.selected=null;const c=$('#thumb');c.width=44;c.height=44;const crop=Math.min(state.source.width,state.source.height);c.getContext('2d').drawImage(state.source,(state.source.width-crop)/2,(state.source.height-crop)/2,crop,crop,0,0,44,44);$('#fileName').textContent=state.name;$('#imageMeta').textContent=`${state.source.width} × ${state.source.height}${state.size?' · '+formatBytes(state.size):''}`;const experiment=activeExperiment();experiment?.destroy?.();experiment?.mount();if(experiment){renderParameterGuide(experiment.id);renderPseudocode(experiment.id)}}
+async function load(file){if(!file?.type.startsWith('image/'))return;imageRequest++;const b=await createImageBitmap(file),[w,h]=fit(b.width,b.height);state.source.width=w;state.source.height=h;state.source.getContext('2d').drawImage(b,0,0,w,h);b.close();state.name=file.name;state.size=file.size;state.url=null;sourceChanged()}
+let imageRequest=0;
+async function loadBundledImage(url,button,name='Selected image'){
+  const request=++imageRequest,image=new Image();
+  await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(new Error(`Could not load ${url}`));image.src=url});
+  // A later click supersedes an earlier one that is still loading.
+  if(request!==imageRequest)return;
   const [w,h]=fit(image.naturalWidth,image.naturalHeight);
   state.source.width=w;state.source.height=h;
   state.source.getContext('2d').drawImage(image,0,0,w,h);
-  state.name='Selected image';state.size=null;
+  state.name=name;state.size=null;state.url=url;
   $$('.image-picker-grid button').forEach(item=>item.classList.toggle('selected',item===button));
   closeImagePicker();sourceChanged();
 }
