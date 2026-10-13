@@ -5,7 +5,7 @@
 const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
 
 const SQUARE=20,SQUARES=5,SIZE=SQUARE*SQUARES;
-const HARRIS_SIGMA=1.5,HARRIS_K=.05,NOISE_SIGMA=.004,NOISE_SEED=7;
+const HARRIS_SIGMA=1.5,HARRIS_K=.05;
 const ZOOM_RADIUS=6,ZOOM_CELLS=ZOOM_RADIUS*2+1,CORNER_TOLERANCE=6;
 const DEFAULTS={window:9,threshold:10,maxKeypoints:250};
 const CASES=[{id:'small',window:3},{id:'large',window:49}];
@@ -16,20 +16,19 @@ const MONO='ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 
 /* ---------- synthetic image and Harris response (pure) ---------- */
 
-function mulberry32(seed){return()=>{seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 
 // 5 × 5 checkerboard filling the canvas. Edges sit on pixel centers (area-averaged), so each
 // of the 4 × 4 interior X-junctions lands on one pixel; a gentle lighting falloff gives the
-// corners slightly different strengths, and faint sensor noise keeps it realistic.
+// corners slightly different strengths. No noise is added, so the Python sample reproduces the
+// page's response map exactly.
 function makeCheckerboard(){
-  const random=mulberry32(NOISE_SEED),sub=4,gray=new Float64Array(SIZE*SIZE);
+  const sub=4,gray=new Float64Array(SIZE*SIZE);
   const sign=(px,py)=>(Math.floor(clamp(px,0,SIZE-1e-6)/SQUARE)+Math.floor(clamp(py,0,SIZE-1e-6)/SQUARE))%2?-1:1;
   for(let y=0;y<SIZE;y++)for(let x=0;x<SIZE;x++){
     let coverage=0;
     for(let v=0;v<sub;v++)for(let u=0;u<sub;u++)coverage+=sign(x-.5+(u+.5)/sub,y-.5+(v+.5)/sub);
     const light=1-.08*(.62*x/(SIZE-1)+.38*y/(SIZE-1));
-    const noise=Math.sqrt(-2*Math.log(1-random()))*Math.cos(2*Math.PI*random())*NOISE_SIGMA;
-    gray[y*SIZE+x]=.5+.38*light*coverage/(sub*sub)+noise;
+    gray[y*SIZE+x]=.5+.38*light*coverage/(sub*sub);
   }
   return gray;
 }
@@ -104,11 +103,13 @@ function nearestCorner(corners,point){
   return{index:best,distance};
 }
 
-// First keypoint inside a corner's blob is a hit; later ones there are duplicates.
+// First keypoint inside a corner's blob is a hit if it sits on the corner pixel, or an off-center 'edge'
+// (a rim pixel of the blob, not an image edge) if an earlier window already erased the center; later ones are duplicates.
 function classifyKeypoints(keypoints,corners){
   const counts=new Array(corners.length).fill(0);
-  return keypoints.map(point=>{const near=nearestCorner(corners,point);if(near.distance>CORNER_TOLERANCE)return{corner:-1,role:'spurious'};counts[near.index]++;return{corner:near.index,role:counts[near.index]===1?'hit':'duplicate'}});
+  return keypoints.map(point=>{const near=nearestCorner(corners,point);if(near.distance>CORNER_TOLERANCE)return{corner:-1,role:'spurious'};counts[near.index]++;return{corner:near.index,role:counts[near.index]>1?'duplicate':near.distance?'edge':'hit'}});
 }
+const firstInBlob=role=>role.role==='hit'||role.role==='edge';
 
 function workingMap(scene,run,steps){const work=scene.map.slice();for(let i=0;i<steps;i++)zeroWindow(work,scene.w,scene.h,run.keypoints[i].x,run.keypoints[i].y,run.radius);return work}
 
@@ -122,11 +123,11 @@ function blobPeak(values,scene,corner){
 // A corner is lost once nothing in its blob reaches the threshold any more, so it can never be
 // picked again (values only ever decrease); `missed` is every corner without a keypoint.
 function summarize(scene,run,roles,steps){
-  const work=workingMap(scene,run,steps),found=new Set();let duplicates=0,spurious=0;
-  for(let i=0;i<steps;i++){const role=roles[i];if(role.role==='hit')found.add(role.corner);else if(role.role==='duplicate')duplicates++;else spurious++}
+  const work=workingMap(scene,run,steps),found=new Set();let duplicates=0,spurious=0,edges=0;
+  for(let i=0;i<steps;i++){const role=roles[i];if(firstInBlob(role)){found.add(role.corner);if(role.role==='edge')edges++}else if(role.role==='duplicate')duplicates++;else spurious++}
   const lost=[],missed=[];
   scene.corners.forEach((corner,index)=>{if(found.has(index))return;missed.push(index);if(blobPeak(scene.map,scene,corner)>=run.threshold&&blobPeak(work,scene,corner)<run.threshold)lost.push(index)});
-  return{work,found:found.size,duplicates,spurious,lost,missed,steps};
+  return{work,found:found.size,edges,duplicates,spurious,lost,missed,steps};
 }
 
 function finalSummary(scene,params){const run=greedyNms(scene.map,scene.w,scene.h,params),roles=classifyKeypoints(run.keypoints,scene.corners);return{run,roles,summary:summarize(scene,run,roles,run.keypoints.length)}}
@@ -135,7 +136,7 @@ const rangeCache=new Map();
 function exactWindowRange(threshold,maxKeypoints){
   const key=`${threshold}|${maxKeypoints}`;if(rangeCache.has(key))return rangeCache.get(key);
   const scene=getScene(),exact=[];
-  for(let window=3;window<=55;window+=2){const {run,summary}=finalSummary(scene,{window,threshold,maxKeypoints});if(run.keypoints.length===scene.corners.length&&summary.found===scene.corners.length)exact.push(window)}
+  for(let window=3;window<=55;window+=2){const {run,summary}=finalSummary(scene,{window,threshold,maxKeypoints});if(run.keypoints.length===scene.corners.length&&summary.found===scene.corners.length&&!summary.edges)exact.push(window)}
   const range=exact.length?{min:exact[0],max:exact.at(-1),contiguous:exact.length===(exact.at(-1)-exact[0])/2+1}:null;
   rangeCache.set(key,range);return range;
 }
@@ -193,7 +194,7 @@ function drawZoom(canvas,scene,run,roles,steps,summary,center){
   ctx.save();ctx.beginPath();ctx.rect(0,0,size,size);ctx.clip();
   run.keypoints.slice(0,steps).forEach((point,index)=>{const latest=index===steps-1;if(Math.abs(point.x-center.x)<=run.radius+ZOOM_RADIUS+1&&Math.abs(point.y-center.y)<=run.radius+ZOOM_RADIUS+1)drawWindow(ctx,point.x,point.y,run.radius,cell,origin,latest?{width:Math.max(2,cell*.09),dash:[cell*.32,cell*.2]}:{width:1.4,alpha:.6,dash:[cell*.25,cell*.2]})});
   ctx.restore();
-  keyIndex.forEach((order,index)=>{const x=index%scene.w,y=(index-x)/scene.w;if(Math.abs(x-center.x)>ZOOM_RADIUS||Math.abs(y-center.y)>ZOOM_RADIUS)return;drawAsterisk(ctx,(x-origin.x+.5)*cell,(y-origin.y+.5)*cell,cell*.78,roles[order].role==='hit'?'hit':'dup')});
+  keyIndex.forEach((order,index)=>{const x=index%scene.w,y=(index-x)/scene.w;if(Math.abs(x-center.x)>ZOOM_RADIUS||Math.abs(y-center.y)>ZOOM_RADIUS)return;drawAsterisk(ctx,(x-origin.x+.5)*cell,(y-origin.y+.5)*cell,cell*.78,firstInBlob(roles[order])?'hit':'dup')});
   const next=steps<run.keypoints.length?run.keypoints[steps]:null;
   if(next&&Math.abs(next.x-center.x)<=ZOOM_RADIUS&&Math.abs(next.y-center.y)<=ZOOM_RADIUS){ctx.save();ctx.strokeStyle=INK.yellow;ctx.lineWidth=Math.max(2,cell*.1);ctx.strokeRect((next.x-origin.x)*cell+ctx.lineWidth/2,(next.y-origin.y)*cell+ctx.lineWidth/2,cell-ctx.lineWidth,cell-ctx.lineWidth);ctx.restore()}
 }
@@ -204,15 +205,16 @@ function drawExplorerMap(canvas,scene,run,roles,steps,summary,center,finished){
   run.keypoints.slice(0,steps).forEach((point,index)=>{if(index<steps-1)drawWindow(ctx,point.x,point.y,run.radius,scale,origin,{width:1,alpha:.5,dash:[4,3]})});
   if(steps)drawWindow(ctx,run.keypoints[steps-1].x,run.keypoints[steps-1].y,run.radius,scale,origin,{width:2,dash:[6,4]});
   const lost=finished?summary.missed:summary.lost;lost.forEach(index=>{const corner=scene.corners[index];drawRing(ctx,(corner.x+.5)*scale,(corner.y+.5)*scale,marker*.75,INK.cyan,{width:2,dash:[3,3]})});
-  run.keypoints.slice(0,steps).forEach((point,index)=>{const cx=(point.x+.5)*scale,cy=(point.y+.5)*scale;if(roles[index].role==='hit')return;ctx.fillStyle=INK.amber;ctx.strokeStyle='#000';ctx.lineWidth=1;const s=Math.max(4,scale*1.2);ctx.fillRect(cx-s/2,cy-s/2,s,s);ctx.strokeRect(cx-s/2,cy-s/2,s,s)});
-  run.keypoints.slice(0,steps).forEach((point,index)=>{if(roles[index].role==='hit')drawAsterisk(ctx,(point.x+.5)*scale,(point.y+.5)*scale,marker,'hit')});
+  run.keypoints.slice(0,steps).forEach((point,index)=>{const cx=(point.x+.5)*scale,cy=(point.y+.5)*scale;if(firstInBlob(roles[index]))return;ctx.fillStyle=INK.amber;ctx.strokeStyle='#000';ctx.lineWidth=1;const s=Math.max(4,scale*1.2);ctx.fillRect(cx-s/2,cy-s/2,s,s);ctx.strokeRect(cx-s/2,cy-s/2,s,s)});
+  run.keypoints.slice(0,steps).forEach((point,index)=>{if(firstInBlob(roles[index]))drawAsterisk(ctx,(point.x+.5)*scale,(point.y+.5)*scale,marker,'hit')});
   const next=steps<run.keypoints.length?run.keypoints[steps]:null;if(next)drawRing(ctx,(next.x+.5)*scale,(next.y+.5)*scale,marker*.7,INK.yellow,{width:2});
   ctx.save();ctx.strokeStyle=INK.red;ctx.lineWidth=2;ctx.strokeRect((center.x-ZOOM_RADIUS)*scale+1,(center.y-ZOOM_RADIUS)*scale+1,ZOOM_CELLS*scale-2,ZOOM_CELLS*scale-2);ctx.restore();
 }
 
 function drawCasePre(canvas,scene,run){
   const {ctx,size}=setupCanvas(canvas),scale=size/SIZE;drawResponse(ctx,size,scene.map);
-  const first=run.keypoints[0];if(first)drawWindow(ctx,first.x,first.y,run.radius,scale,{x:0,y:0},{width:2,dash:[6,4]});
+  // Shaded as well as outlined: a large window runs off the canvas, leaving only part of its outline.
+  const first=run.keypoints[0];if(first){ctx.fillStyle='rgba(225,29,29,.2)';ctx.fillRect((first.x-run.radius)*scale,(first.y-run.radius)*scale,(2*run.radius+1)*scale,(2*run.radius+1)*scale);drawWindow(ctx,first.x,first.y,run.radius,scale,{x:0,y:0},{width:2,dash:[6,4]})}
 }
 
 function drawCasePost(canvas,scene,run,roles,summary){
@@ -220,8 +222,8 @@ function drawCasePost(canvas,scene,run,roles,summary){
   run.keypoints.forEach(point=>{kept[point.y*scene.w+point.x]=point.value});drawResponse(ctx,size,kept);
   run.keypoints.forEach(point=>drawWindow(ctx,point.x,point.y,run.radius,scale,origin,{width:1,alpha:run.radius>3?.7:.45,dash:[4,3]}));
   const pixel=Math.max(3,scale),counts=new Array(scene.corners.length).fill(0);
-  run.keypoints.forEach((point,index)=>{const role=roles[index];if(role.corner>=0)counts[role.corner]++;ctx.fillStyle=role.role==='hit'?'#fff':INK.amber;ctx.fillRect((point.x+.5)*scale-pixel/2,(point.y+.5)*scale-pixel/2,pixel,pixel)});
-  run.keypoints.forEach((point,index)=>{if(roles[index].role==='hit')drawRing(ctx,(point.x+.5)*scale,(point.y+.5)*scale,Math.max(5,scale*2.4),INK.red,{width:1.5})});
+  run.keypoints.forEach((point,index)=>{const role=roles[index];if(role.corner>=0)counts[role.corner]++;if(firstInBlob(role))return;ctx.fillStyle=INK.amber;ctx.fillRect((point.x+.5)*scale-pixel/2,(point.y+.5)*scale-pixel/2,pixel,pixel)});
+  run.keypoints.forEach((point,index)=>{if(firstInBlob(roles[index]))drawAsterisk(ctx,(point.x+.5)*scale,(point.y+.5)*scale,clamp(scale*2.8,9,14),'hit')});
   summary.missed.forEach(index=>{const corner=scene.corners[index];drawRing(ctx,(corner.x+.5)*scale,(corner.y+.5)*scale,Math.max(6,scale*3),INK.cyan,{width:2,dash:[3,3]})});
   const font=clamp(Math.round(scale*3.4),9,13);ctx.font=`700 ${font}px ${MONO}`;ctx.textAlign='left';ctx.textBaseline='middle';
   counts.forEach((count,index)=>{if(count<2)return;const corner=scene.corners[index],label=`×${count}`,x=(corner.x+.5)*scale+Math.max(6,scale*3.2),y=(corner.y+.5)*scale-Math.max(6,scale*3.2),w=ctx.measureText(label).width+6;ctx.fillStyle='rgba(0,0,0,.72)';ctx.fillRect(x-3,y-font*.62,w,font*1.24);ctx.fillStyle=INK.amber;ctx.fillText(label,x,y+.5)});
@@ -235,7 +237,7 @@ export const NMS_PYTHON_SAMPLE=`import numpy as np
 from skimage.feature import corner_harris
 
 
-def checkerboard(square=20, n=5, seed=7):
+def checkerboard(square=20, n=5):
     """5x5 checkerboard; its 4x4 interior X-junctions are the true corners."""
     size, sub = square * n, 4
     t = np.clip((np.arange(size * sub) + 0.5) / sub - 0.5, 0, size - 1e-6)
@@ -244,8 +246,7 @@ def checkerboard(square=20, n=5, seed=7):
     sign = sign.reshape(size, sub, size, sub).mean(axis=(1, 3))  # anti-aliased edges
     y, x = np.mgrid[0:size, 0:size] / (size - 1)
     light = 1 - 0.08 * (0.62 * x + 0.38 * y)                      # gentle lighting falloff
-    noise = np.random.default_rng(seed).normal(0, 0.004, (size, size))
-    return 0.5 + 0.38 * light * sign + noise
+    return 0.5 + 0.38 * light * sign
 
 
 def harris_map(image, sigma=1.5, k=0.05, pad=8):
@@ -274,12 +275,12 @@ export function nmsGuide(state){
   const s={...DEFAULTS,...state},radius=(s.window-1)/2,range=exactWindowRange(s.threshold,s.maxKeypoints);
   const rangeText=range?`With this threshold and keypoint limit, ${range.min} × ${range.min}${range.max>range.min?` to ${range.max} × ${range.max}`:''} windows return exactly the 16 corners.`:'With this threshold and keypoint limit, no window size returns exactly the 16 corners.';
   return{
-    overview:`A real Harris response of a 5 × 5 checkerboard (16 interior X-junctions, 20 px apart) is clipped at 0 and rescaled to integers 0–99. Greedy NMS then repeats: take the largest remaining value, keep it as a keypoint, and set everything in its window to 0. ${rangeText}`,
+    overview:`A real Harris response of a 5 × 5 checkerboard (16 interior X-junctions, 20 px apart) is clipped at 0 and rescaled to integers 0–99. Greedy NMS then repeats: take the largest remaining value, keep it as a keypoint, and set everything in its window to 0. Equal values are taken in raster order (top row first), as np.argmax does. ${rangeText}`,
     params:[
       {name:'Window size',value:`${s.window} × ${s.window} (radius ${radius})`,description:'Square zeroed around every kept maximum. Smaller than a corner blob leaves its shoulders behind, and they become duplicate detections; a radius of 20 px or more (the corner spacing) also erases genuine neighboring corners.',active:true},
       {name:'Stop threshold',value:`${s.threshold} of 99`,description:'The loop ends when the largest remaining value is below this. Lower values let more of each blob count as a candidate.',active:true},
       {name:'Max keypoints',value:String(s.maxKeypoints),description:'Second stopping rule: keep only the top N maxima (the lecture mentions e.g. 250) instead of sweeping until nothing is left.',active:true},
-      {name:'Harris k',value:String(HARRIS_K),description:'R = det(M) − k·trace(M)². Fixed here; negative (edge) responses are clipped to 0 before NMS.',active:true},
+      {name:'Harris κ',value:String(HARRIS_K),description:'R = det(M) − κ·trace(M)². Fixed here; negative (edge) responses are clipped to 0 before NMS.',active:true},
       {name:'Window σ',value:`${HARRIS_SIGMA} px`,description:'Gaussian weighting of Ix², IxIy and Iy² inside M. Fixed here; it sets how wide each corner blob is.',active:true}
     ],
     links:[{label:'Non-maximum suppression',url:'https://en.wikipedia.org/wiki/Harris_corner_detector#Non-maximum_suppression'},{label:'Harris corner detector',url:'https://en.wikipedia.org/wiki/Harris_corner_detector'},{label:'skimage corner_harris',url:'https://scikit-image.org/docs/stable/api/skimage.feature.html#skimage.feature.corner_harris'}]
@@ -305,14 +306,14 @@ function caseMarkup(item){
     <p id="nmsCaseNote-${item.id}"></p></article>`;
 }
 
-const CASE_LEGEND=`<div class="nms-legend"><span><i class="nms-key-ring"></i>kept maximum (first in its blob)</span><span><i class="nms-key-dup"></i>duplicate; ×n = detections in that blob</span><span><i class="nms-key-window"></i>suppression window</span><span><i class="nms-key-lost"></i>true corner lost</span></div>`;
+const CASE_LEGEND=`<div class="nms-legend"><span><i class="nms-key-kp">✱</i>kept maximum (first in its blob)</span><span><i class="nms-key-dup"></i>duplicate; ×n = detections in that blob</span><span><i class="nms-key-window"></i>suppression window</span><span><i class="nms-key-lost"></i>true corner lost</span></div>`;
 
-const LEGEND=`<div class="nms-legend"><span><i class="nms-key-kp">✱</i>keypoint (first in its blob)</span><span><i class="nms-key-dup"></i>duplicate in an already-found blob</span><span><i class="nms-key-window"></i>suppression window</span><span><i class="nms-key-next"></i>next max</span><span><i class="nms-key-zero">0</i>value zeroed by a window</span><span><i class="nms-key-lost"></i>true corner lost</span></div>`;
+const LEGEND=`<div class="nms-legend"><span><i class="nms-key-kp">✱</i>keypoint (first in its blob)</span><span><i class="nms-key-dup"></i>duplicate in an already-found blob</span><span><i class="nms-key-window"></i>suppression window</span><span><i class="nms-key-next"></i>next max</span><span><i class="nms-key-zero">0</i>value zeroed by a window</span><span><i class="nms-key-blank"></i>0 before NMS (edges, flat areas)</span><span><i class="nms-key-lost"></i>true corner lost</span></div>`;
 
 function mountNms(experiment,root,runtime,token){
   const s=experiment.state={...DEFAULTS,...experiment.state};
   root.innerHTML=`<div class="l4-page nms-page">
-  <section class="l4-section"><header><span>Slide 25</span><h2>(Simple) non-maximum suppression on the Harris response</h2><p>The Harris operator scores how corner-like every pixel is, so each corner shows up as a small blob of high values rather than one pixel. Simplest approach: iteratively search for the max value, keep it, then zero out everything in the surrounding window. Step through it on one blob, exactly as on the slide.</p></header>
+  <section class="l4-section"><header><span>Slide 25</span><h2>(Simple) non-maximum suppression on the Harris response</h2><p>The Harris operator scores how corner-like every pixel is, so each corner shows up as a small blob of high values rather than one pixel. Simplest approach: iteratively search for the max value, keep it, then zero out everything in the surrounding window. Every iteration rescans the whole map for its max, which is why the slide adds that speed-ups are possible. Step through it on one blob, exactly as on the slide.</p></header>
     <div class="controls nms-controls">${controlRange('nmsWindow','Window size (w × w)',3,55,s.window,2)}${controlRange('nmsThreshold','Stop threshold (of 99)',1,60,s.threshold)}${controlRange('nmsMax','Max keypoints (top N)',1,250,s.maxKeypoints)}</div>
     <div class="l4-presets nms-presets" role="group" aria-label="Window size presets"><span>Window presets</span>${PRESETS.map(item=>`<button type="button" data-window="${item.window}">${item.label} · ${item.window} × ${item.window}</button>`).join('')}</div>
     <div class="nms-explorer">
@@ -323,7 +324,7 @@ function mountNms(experiment,root,runtime,token){
     <div class="nms-stats" id="nmsStats"></div>
     ${LEGEND}
   </section>
-  <section class="l4-section"><header><span>Speaker notes · slide 25</span><h2>The window size is a hyperparameter</h2><p>Same Harris response, same stop threshold (${DEFAULTS.threshold}) and limit (${DEFAULTS.maxKeypoints}); only the window changes. Each case shows the response before NMS (with one window drawn at the strongest corner) and the maxima that survive greedy NMS.</p></header>
+  <section class="l4-section"><header><span>Speaker notes · slide 25</span><h2>The window size is a hyperparameter</h2><p>Same Harris response, same stop threshold (${DEFAULTS.threshold}) and limit (${DEFAULTS.maxKeypoints}); only the window changes. Each case shows the response before NMS (with one window, shaded, at the strongest corner) and the maxima that survive greedy NMS.</p></header>
     <div class="nms-cases">${CASES.map(caseMarkup).join('')}</div>
     ${CASE_LEGEND}
   </section></div>`;
@@ -375,23 +376,31 @@ const plural=(count,word)=>`${count} ${word}${count===1?'':'s'}`;
 
 function verdict(run,summary,total){
   const n=run.keypoints.length,parts=[];
-  if(n===total&&summary.found===total&&!summary.duplicates&&!summary.spurious)return{text:`${n} keypoints = exactly the ${total} corners`,tone:'good'};
+  if(n===total&&summary.found===total&&!summary.edges&&!summary.duplicates&&!summary.spurious)return{text:`${n} keypoints = exactly the ${total} corners`,tone:'good'};
   if(summary.duplicates)parts.push(plural(summary.duplicates,'duplicate'));
   if(summary.missed.length)parts.push(`${summary.missed.length} of ${total} corners missed`);
+  if(summary.edges)parts.push(`${summary.edges} found only off-center`);
   if(summary.spurious)parts.push(`${summary.spurious} off-corner`);
   return{text:`${plural(n,'keypoint')}: ${parts.join(', ')||'stopped early'}`,tone:'bad'};
 }
 
 function describe(runtime,state){
   const {run,roles,step,scene}=runtime,total=run.keypoints.length,w=run.window,next=step<total?run.keypoints[step]:null;
-  const stopText=run.stop.reason==='limit'?`Stopped: reached the limit of ${state.maxKeypoints} keypoints (the next max would have been ${run.stop.value}).`:`Stopped: the largest remaining value is ${run.stop.value}, below the threshold ${Math.max(1,state.threshold)}.`;
+  const stopText=run.stop.reason==='limit'?`Stopped: reached the limit of ${plural(state.maxKeypoints,'keypoint')}${run.stop.value<run.threshold?` (the threshold would have stopped it here too: the next max is ${run.stop.value}, below ${run.threshold})`:` (the next max would have been ${run.stop.value})`}.`:`Stopped: the largest remaining value is ${run.stop.value}, below the threshold ${run.threshold}.`;
   if(step===0)return next?`Ready. The largest value is ${next.value} at ${fmt(next)} (yellow). Step keeps it as a keypoint and zeroes its ${w} × ${w} window.`:`Nothing to keep. ${stopText}`;
   const point=run.keypoints[step-1],role=roles[step-1],before=summarize(scene,run,roles,step-1),after=summarize(scene,run,roles,step);
-  const wiped=after.lost.filter(index=>!before.lost.includes(index)).map(index=>scene.corners[index]);
-  const corner=role.corner>=0?scene.corners[role.corner]:null,remnant=corner&&role.role==='hit'&&(corner.x!==point.x||corner.y!==point.y)&&before.work[corner.y*scene.w+corner.x]===0&&scene.map[corner.y*scene.w+corner.x]>0;
-  const what=role.role==='hit'?`a new corner (${after.found} of ${scene.corners.length})${remnant?`, although only the surviving edge of its blob: an earlier window already erased its center at ${fmt(corner)}`:''}`:role.role==='duplicate'?`a duplicate: the corner at ${fmt(corner)} was already found, but this shoulder survived its window`:'a point away from every true corner';
+  const corner=role.corner>=0?scene.corners[role.corner]:null;
+  const what=role.role==='hit'?`a new corner (${after.found} of ${scene.corners.length})`:role.role==='edge'?`a new corner (${after.found} of ${scene.corners.length}), but off-center: an earlier window already erased its center at ${fmt(corner)}, so only part of its blob's rim was left`:role.role==='duplicate'?`a duplicate: the corner at ${fmt(corner)} was already found, but this shoulder survived its window`:'a point away from every true corner';
   let text=`Iteration ${step}: kept max ${point.value} at ${fmt(point)} as ${what}. Zeroed a ${w} × ${w} window (${point.cleared} non-zero values).`;
-  if(wiped.length)text+=` The window also erased ${wiped.length===1?'the genuine corner':`${wiped.length} genuine corners`} at ${wiped.map(fmt).join(', ')}.`;
+  // Credit each erasure to the iteration whose window zeroes the corner pixel; a corner is lost once
+  // nothing in its blob reaches the threshold (possibly a later iteration, if part of its rim survived).
+  const centerAt=(work,index)=>work[scene.corners[index].y*scene.w+scene.corners[index].x];
+  const newlyLost=after.lost.filter(index=>!before.lost.includes(index)),centered=scene.corners.map((_,index)=>index).filter(index=>index!==role.corner&&centerAt(before.work,index)>0&&!centerAt(after.work,index));
+  const erased=centered.filter(index=>newlyLost.includes(index)),covered=centered.filter(index=>!newlyLost.includes(index)),finished=newlyLost.filter(index=>!centered.includes(index));
+  const corners=list=>`${list.length===1?'the genuine corner':`${list.length} genuine corners`} at ${list.map(index=>fmt(scene.corners[index])).join(', ')}`;
+  if(erased.length)text+=` The window also erased ${corners(erased)}.`;
+  if(covered.length)text+=` It also zeroed the center of ${corners(covered)}; part of ${covered.length===1?'that blob':'those blobs'} lies outside the window and survives.`;
+  if(finished.length)text+=` It wiped out what was left of ${corners(finished)}, whose center${finished.length===1?'':'s'} an earlier window had erased.`;
   text+=next?` Next max: ${next.value} at ${fmt(next)}.`:` ${stopText}`;
   return text;
 }
@@ -412,7 +421,7 @@ function render(experiment,runtime,root){
   const final=verdict(run,runtime.final,total),lostLabel=finished?'Corners missed':'Corners lost so far',lostCount=finished?summary.missed.length:summary.lost.length;
   root.querySelector('#nmsStats').innerHTML=[
     ['Iterations (keypoints kept)',`${step}${finished?'':` / ${run.keypoints.length}`}`,''],
-    ['True corners found',`${summary.found} / ${total}`,summary.found===total?'good':''],
+    ['True corners found',`${summary.found} / ${total}${summary.edges?` (${summary.edges} off-center)`:''}`,summary.found===total&&!summary.edges?'good':''],
     ['Duplicates',summary.duplicates,summary.duplicates?'bad':''],
     [lostLabel,lostCount,lostCount?'bad':''],
     ['Full run with these settings',final.text,final.tone]
@@ -429,7 +438,7 @@ function writeCaseText(root,runtime){
     if(item.id==='small'){
       verdictEl.textContent=`${n} keypoints for ${total} corners`;
       const firstDuplicate=item.roles.findIndex(role=>role.role==='duplicate');
-      note.textContent=`The ${item.window} × ${item.window} window clears only the peak and its 8 neighbors, while each blob stays above the threshold for about 3 px in every direction. The first ${firstDuplicate>=0?firstDuplicate:n} iterations pick the 16 blob centers; after that the loop keeps returning to blobs it has already found and picks their leftover shoulders. Result: ${summary.found}/${total} corners plus ${summary.duplicates} duplicates (about ${(n/total).toFixed(0)} detections per corner).`;
+      note.textContent=`The ${item.window} × ${item.window} window clears only the peak and its 8 neighbors, while each blob stays above the threshold for about 3 px in every direction. The first ${firstDuplicate>=0?firstDuplicate:n} iterations pick the 16 blob centers; after that the loop keeps returning to blobs it has already found and picks their leftover shoulders. Result: ${summary.found}/${total} corners plus ${summary.duplicates} duplicates (${(n/total).toFixed(1)} detections per corner on average).`;
     }else{
       verdictEl.textContent=`${n} keypoints · ${summary.missed.length} corners lost`;
       note.textContent=`A ${item.window} × ${item.window} window has radius ${run.radius} px: it reaches past the neighboring corners ${SQUARE} px away and covers their whole blobs. The strongest corner is kept first, and its window erases its genuine neighbors before the loop ever visits them. Result: only ${summary.found} of ${total} corners survive; the ${summary.missed.length} cyan circles mark real corners that were suppressed.`;

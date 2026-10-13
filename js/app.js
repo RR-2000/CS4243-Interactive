@@ -1,6 +1,6 @@
 import {createLecture4Experiments} from './lecture4.js?v=18';
-import {createNmsExperiment,nmsGuide,NMS_PYTHON_SAMPLE} from './nms.js?v=2';
-import {createLecture8Experiments,siftGuide,ratioGuide,SIFT_PYTHON_SAMPLE,RATIO_PYTHON_SAMPLE} from './lecture8.js?v=1';
+import {createNmsExperiment,nmsGuide,NMS_PYTHON_SAMPLE} from './nms.js?v=5';
+import {createLecture8Experiments,siftGuide,ratioGuide,SIFT_PYTHON_SAMPLE,RATIO_PYTHON_SAMPLE} from './lecture8.js?v=5';
 
 (()=>{
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -607,19 +607,20 @@ function mountHarris(experiment){
   if(ensureNaturalPhoto('images/spanish steps.jpeg'))return;
   root.innerHTML=`${photoChooser('harrisPhotos')}<div class="controls harris-controls">
     ${controlRange('harrisSigma','σ · Gaussian window',.5,4,s.sigma,.25)}
-    ${controlRange('harrisK','k · trace weight',.02,.2,s.k,.005)}
+    ${controlRange('harrisK','κ · trace weight',.02,.2,s.k,.005)}
     ${controlRange('harrisThreshold','Threshold · % of max R',.1,10,s.threshold,.1)}
     ${controlRange('harrisNms','NMS radius',1,10,s.nms)}
     <button class="button ghost" id="harrisReset" type="button">Reset</button>
   </div>
-  <div class="results">${card('harrisPre','Pre · input image')}${card('harrisPost','Post · Harris corners (in red)','—')}</div>
-  <div class="gabor-section-title harris-section-title"><div><b>The four steps</b><small>Click any step image to inspect the window at that point; clicks near a red dot snap to that corner.</small></div><span id="harrisStatus" role="status">Computing…</span></div>
+  <div class="results picker" id="harrisPrePost">${card('harrisPre','Pre · input image','—')}${card('harrisPost','Post · Harris corners (in red)','—')}</div>
+  <div class="gabor-section-title harris-section-title"><div><b>The four steps · slide 24</b><small>Click the Post image or any step image to inspect the window at that point; a click close to a detected corner snaps to it.</small></div><span id="harrisStatus" role="status">Computing…</span></div>
   <div class="results four picker" id="harrisSteps">
-    ${card('harrisGradient','1 · Gradient at each point','hue = direction · brightness = |∇I|')}
-    ${card('harrisResponse','2 · Cornerness R of each window','blue: R < 0 edge · red: R > 0 corner')}
+    ${card('harrisGradient','1 · Gradient at each point','hue = orientation mod 180° · brightness √|∇I|')}
+    ${card('harrisResponse','2 · Cornerness R of each window','blue R < 0 · black ≈ 0 · red→yellow R > 0')}
     ${card('harrisCandidates','3 · R > threshold','—')}
     ${card('harrisMaxima','4 · Non-maximum suppression','—')}
   </div>
+  <div class="harris-key" aria-label="Colour key for the four steps"><span><i class="hue"></i>Step 1 hue: orientation 0° → 180°</span><span><i class="rmap"></i>Step 2: R &lt; 0 · 0 · R &gt; 0 (⁴√ scale)</span><span><i class="cand"></i>R &gt; t</span><span><i class="supp"></i>candidate removed by NMS</span><span><i class="kept"></i>corner kept</span><span><i class="band"></i>border band, skipped</span></div>
   <div class="harris-analysis">
     <section class="harris-inspector" aria-live="polite">
       <header><b>Second-moment matrix of the probed window</b><small id="harrisProbeMeta">—</small></header>
@@ -632,18 +633,18 @@ function mountHarris(experiment){
         <div><dt>λ₂ · smaller eigenvalue</dt><dd id="harrisLambda2">—</dd></div>
         <div><dt>det M = λ₁λ₂</dt><dd id="harrisDet">—</dd></div>
         <div><dt>trace M = λ₁ + λ₂</dt><dd id="harrisTrace">—</dd></div>
-        <div><dt>R = det M − k (trace M)²</dt><dd id="harrisR">—</dd></div>
+        <div><dt>R = det M − κ (trace M)²</dt><dd id="harrisR">—</dd></div>
         <div><dt>Threshold t</dt><dd id="harrisT">—</dd></div>
       </dl>
       <p class="harris-verdict" id="harrisVerdict">—</p>
     </section>
     <figure class="card harris-plane">
-      <figcaption><span>Eigenvalues of every window</span><small>√ axes · grey dots = sampled windows</small></figcaption>
+      <figcaption><span>Eigenvalue plane · slide 22</span><small id="harrisPlaneMeta">√ axes · grey dots = sampled windows</small></figcaption>
       <canvas id="harrisPlane" aria-label="Eigenvalue plane with corner, edge, and flat regions"></canvas>
-      <div class="harris-plane-legend"><span><i class="corner"></i>corner · R &gt; t</span><span><i class="edge"></i>edge · R &lt; −t</span><span><i class="flat"></i>flat · |R| ≤ t</span><span><i class="probe"></i>probed window</span></div>
+      <div class="harris-plane-legend"><span><i class="corner"></i>corner · R &gt; t</span><span><i class="edge"></i>edge · R &lt; −t</span><span><i class="flat"></i>flat or in between · |R| ≤ t</span><span><i class="probe"></i>probed window</span></div>
     </figure>
   </div>
-  <div class="gabor-section-title harris-section-title"><div><b>Found Harris corners on a second view</b><small>The identical detector, including the first view’s absolute threshold t, runs on a rotated, rescaled, or contrast-changed copy.</small></div><span id="harrisRepeatSummary">—</span></div>
+  <div class="gabor-section-title harris-section-title"><div><b>Found Harris corners on a second view · slides 31–35</b><small>The identical detector, including the first view’s absolute threshold t, runs on a rotated, rescaled, or contrast-changed copy.</small></div><span id="harrisRepeatSummary">—</span></div>
   <div class="controls">
     ${controlRange('harrisRotation','Rotation',0,180,s.rotation,5)}
     ${controlRange('harrisScale','Scale',50,150,s.scale,5)}
@@ -656,13 +657,14 @@ function mountHarris(experiment){
     <button data-harris-preset="zoom" type="button">Zoom out to 60%</button>
   </div>
   <div class="results">${card('harrisFirstView','View 1 · loaded image','—')}${card('harrisSecondView','View 2 · transformed copy','—')}</div>
+  <div class="harris-key" aria-label="Marker key for the two views"><span><i class="kept"></i>found in both views (repeated)</span><span><i class="ring"></i>found in this view only</span><span>both views are drawn at the same pixel scale</span></div>
   <div class="stats">
     <div class="stat"><small>Corners · view 1</small><b id="harrisCountFirst">—</b></div>
     <div class="stat"><small>Corners · view 2</small><b id="harrisCountSecond">—</b></div>
-    <div class="stat"><small>View-1 corners inside view 2</small><b id="harrisVisible">—</b></div>
-    <div class="stat"><small>Repeated within ${HARRIS_MATCH_TOLERANCE} px</small><b id="harrisRepeated">—</b></div>
+    <div class="stat"><small>View-1 corners in view 2’s search area</small><b id="harrisVisible">—</b></div>
+    <div class="stat"><small>Repeated · one-to-one within ${HARRIS_MATCH_TOLERANCE} px</small><b id="harrisRepeated">—</b></div>
   </div>
-  <div class="note">Filled dots were found in both views; rings were found in only one. R depends only on the eigenvalues of M, so rotating the image moves its corners with it, up to resampling error. Adding a constant brightness changes no derivative, but multiplying contrast by a multiplies R by a⁴, so a fixed threshold drops the weaker corners. The window σ is fixed in pixels, so zooming changes which structures look like corners: Harris is not scale invariant.</div>`;
+  <div class="note">Repeatability (slide 45) is the share of view-1 corners that land in view 2’s search area (inside the image, outside its skipped border band) and pair one-to-one with a view-2 corner within ${HARRIS_MATCH_TOLERANCE} px, measured in view-2 pixels. R depends only on the eigenvalues of M, so rotating the image moves its corners with it, up to resampling error. Adding a constant brightness changes no derivative, but multiplying contrast by a multiplies R by a⁴ (until pixels saturate), so a fixed threshold drops the weaker corners. The window σ is fixed in pixels, so zooming changes which structures look like corners: Harris is not scale invariant.</div>`;
 
   bindPhotoChooser('harrisPhotos');
   const update=()=>scheduleHarrisRender(experiment,token);
@@ -674,7 +676,7 @@ function mountHarris(experiment){
     syncHarrisControls(s);renderParameterGuide('harris');update();
   };
   $('#harrisReset').onclick=()=>{experiment.state={...HARRIS_DEFAULTS};experiment.mount();renderParameterGuide('harris');renderPseudocode('harris')};
-  $('#harrisSteps').addEventListener('click',event=>{
+  const probeAt=event=>{
     const target=event.target.closest('canvas'),view=harrisRuntime.view;if(!target||!view)return;
     const rect=target.getBoundingClientRect(),snap=Math.max(6,3*s.sigma);
     let x=clamp(Math.floor((event.clientX-rect.left)/rect.width*view.w),0,view.w-1),y=clamp(Math.floor((event.clientY-rect.top)/rect.height*view.h),0,view.h-1),nearest=null;
@@ -682,7 +684,8 @@ function mountHarris(experiment){
     if(nearest){x=nearest.corner.x;y=nearest.corner.y}
     s.probe={x:(x+.5)/view.w,y:(y+.5)/view.h};
     renderHarris(experiment);
-  });
+  };
+  $('#harrisSteps').addEventListener('click',probeAt);$('#harrisPrePost').addEventListener('click',probeAt);
   renderHarris(experiment);
 }
 
@@ -741,7 +744,8 @@ function harrisPeaks(response,w,h,threshold,radius,eligible){
 }
 
 // Exclude a border wide enough that the Gaussian window never reaches the padded image edge or,
-// in the second view, the grey background around the rotated image.
+// in the second view, the grey background around the rotated image, and that every NMS
+// neighborhood lies inside the image (scikit-image's corner_peaks also excludes min_distance).
 function harrisMargin(s){return Math.max(s.nms,Math.ceil(3*s.sigma)+2)}
 
 function harrisSecondView(view,{rotation,scale,contrast}){
@@ -754,10 +758,11 @@ function harrisSecondView(view,{rotation,scale,contrast}){
   context.drawImage(view.canvas,-view.w/2,-view.h/2);
   context.setTransform(1,0,0,1,0,0);
   const image=context.getImageData(0,0,w,h),data=image.data,gray=new Float32Array(w*h);
+  // Contrast saturates each channel as the displayed copy does; the detector's grey is the luminance of
+  // those channels (unrounded), which equals 128 + gain·(L − 128) whenever no channel clips.
   for(let i=0,p=0;i<data.length;i+=4,p++){
-    const luminance=.299*data[i]+.587*data[i+1]+.114*data[i+2];
-    gray[p]=(128+gain*(luminance-128))/255;
-    for(let channel=0;channel<3;channel++)data[i+channel]=128+gain*(data[i+channel]-128);
+    const r=clamp(128+gain*(data[i]-128)),g=clamp(128+gain*(data[i+1]-128)),b=clamp(128+gain*(data[i+2]-128));
+    gray[p]=(.299*r+.587*g+.114*b)/255;data[i]=r;data[i+1]=g;data[i+2]=b;
   }
   context.putImageData(image,0,0);
   const centerX=view.w/2,centerY=view.h/2;
@@ -769,16 +774,21 @@ function harrisSecondView(view,{rotation,scale,contrast}){
   };
 }
 
+// Repeated corners are paired one-to-one: the largest set of (view-1, view-2) pairs within the
+// tolerance (augmenting paths, nearest candidates first), so no view-2 corner confirms two view-1 corners.
+// The 1e-6 slack keeps corners exactly on the margin after the forward and inverse mapping.
 function matchHarrisCorners(firstCorners,secondCorners,second,margin){
-  const firstMatched=new Uint8Array(firstCorners.length),secondMatched=new Uint8Array(secondCorners.length);let visible=0,repeated=0;
+  const firstMatched=new Uint8Array(firstCorners.length),secondMatched=new Uint8Array(secondCorners.length),owner=new Int32Array(secondCorners.length).fill(-1),options=firstCorners.map(()=>[]);let visible=0,repeated=0;
   firstCorners.forEach((corner,index)=>{
     const position=second.toSecond(corner.x,corner.y);
-    if(second.insideFirst(position.x,position.y)<margin)return;
+    if(second.insideFirst(position.x,position.y)<margin-1e-6)return;
     visible++;
-    let best=-1,bestDistance=HARRIS_MATCH_TOLERANCE;
-    secondCorners.forEach((other,otherIndex)=>{const distance=Math.hypot(other.x-position.x,other.y-position.y);if(distance<=bestDistance){best=otherIndex;bestDistance=distance}});
-    if(best>=0){repeated++;firstMatched[index]=1;secondMatched[best]=1}
+    secondCorners.forEach((other,otherIndex)=>{const distance=Math.hypot(other.x-position.x,other.y-position.y);if(distance<=HARRIS_MATCH_TOLERANCE)options[index].push([distance,otherIndex])});
+    options[index].sort((a,b)=>a[0]-b[0]);
   });
+  const augment=(index,seen)=>{for(const [,other] of options[index]){if(seen[other])continue;seen[other]=1;if(owner[other]<0||augment(owner[other],seen)){owner[other]=index;return true}}return false};
+  options.forEach((list,index)=>{if(list.length&&augment(index,new Uint8Array(secondCorners.length)))repeated++});
+  owner.forEach((index,other)=>{if(index>=0){firstMatched[index]=1;secondMatched[other]=1}});
   return{visible,repeated,firstMatched,secondMatched};
 }
 
@@ -789,12 +799,13 @@ function harrisRamp(stops,t){const x=clamp(t,0,1)*(stops.length-1),i=Math.min(st
 function setHarrisMeta(id,text){const meta=$('#'+id)?.closest('.card')?.querySelector('figcaption small');if(meta)meta.textContent=text}
 function harrisDotRadius(target){return Math.max(2,Math.min(target.width,target.height)/150)}
 
-function drawHarrisCorners(id,source,corners,matched=null){
-  const target=canvas(id,source),context=target.getContext('2d'),radius=harrisDotRadius(target);
+// Comparison views use larger markers: filled red = repeated, yellow ring with a dark halo = this view only.
+function drawHarrisCorners(id,source,corners,matched=null,markerRadius=null){
+  const target=canvas(id,source),context=target.getContext('2d'),radius=markerRadius??harrisDotRadius(target);
   corners.forEach((corner,index)=>{
     context.beginPath();context.arc(corner.x+.5,corner.y+.5,radius,0,Math.PI*2);
     if(!matched||matched[index]){context.fillStyle='#ff1f1f';context.fill();context.strokeStyle='rgba(255,255,255,.85)';context.lineWidth=1;context.stroke()}
-    else{context.strokeStyle='#ff1f1f';context.lineWidth=1.5;context.stroke()}
+    else{context.strokeStyle='rgba(0,0,0,.8)';context.lineWidth=3.5;context.stroke();context.strokeStyle='#facc15';context.lineWidth=1.8;context.stroke()}
   });
   return target;
 }
@@ -810,7 +821,14 @@ function drawHarrisResponseMap(id,response,w,h){
   put(id,image);
 }
 
-function drawHarrisCandidates(id,gray,w,h,candidates,corners=null){
+// Steps 3-4 darken and hatch the border band where corners are skipped (harrisMargin).
+function drawHarrisBorderBand(context,w,h,margin){
+  context.save();context.beginPath();context.rect(0,0,w,h);context.rect(margin,margin,w-2*margin,h-2*margin);context.clip('evenodd');
+  context.fillStyle='rgba(0,0,0,.5)';context.fillRect(0,0,w,h);context.strokeStyle='rgba(255,255,255,.28)';context.lineWidth=1;context.beginPath();
+  for(let d=-h;d<w;d+=6){context.moveTo(d,h);context.lineTo(d+h,0)}context.stroke();context.restore();
+  context.save();context.setLineDash([4,3]);context.strokeStyle='rgba(255,255,255,.8)';context.lineWidth=1;context.strokeRect(margin-.5,margin-.5,w-2*margin+1,h-2*margin+1);context.restore();
+}
+function drawHarrisCandidates(id,gray,w,h,candidates,margin,corners=null){
   const image=new ImageData(w,h),candidateColor=corners?[150,120,40]:[255,200,0];
   for(let i=0;i<gray.length;i++){
     const p=i*4,base=40+gray[i]*95;
@@ -819,6 +837,7 @@ function drawHarrisCandidates(id,gray,w,h,candidates,corners=null){
     image.data[p+3]=255;
   }
   const target=put(id,image);
+  drawHarrisBorderBand(target.getContext('2d'),w,h,margin);
   if(corners){
     const context=target.getContext('2d'),radius=harrisDotRadius(target);
     context.fillStyle='#ff1f1f';context.strokeStyle='#fff';context.lineWidth=1;
@@ -853,15 +872,16 @@ function renderHarrisInspector(first,probe,s,threshold,margin,corners){
   const ratio=lambda1?lambda2/lambda1:0,kept=corners.some(corner=>corner.x===probe.x&&corner.y===probe.y),eligible=Math.min(probe.x,probe.y,view.w-1-probe.x,view.h-1-probe.y)>=margin;
   const verdict=$('#harrisVerdict');verdict.className=`harris-verdict ${kind}`;
   if(kind==='corner')verdict.textContent=`Corner: λ₂ = ${ratio.toFixed(2)} λ₁, so the window changes when shifted in any direction and R exceeds t. ${!eligible?`It lies within ${margin} px of the border, so it is not eligible.`:kept?'It is the largest R in its neighborhood and survives non-maximum suppression.':'A neighbor within the NMS radius has a larger R, so non-maximum suppression removes it.'}`;
-  else if(kind==='edge')verdict.textContent=`Edge: λ₂ = ${ratio.toFixed(2)} λ₁. The window changes only when shifted across the edge, so R is strongly negative.`;
-  else verdict.textContent=`Flat or weak: |R| ≤ t. Shifting this window changes it too little in every direction for it to count as a corner.`;
+  else if(kind==='edge')verdict.textContent=`Edge: λ₂ = ${ratio.toFixed(2)} λ₁. The window changes only when shifted across the edge, so R < −t.`;
+  // A pure edge (λ₂ = 0) has R = −κλ₁², so λ₁ ≤ √(t/κ) can never reach R < −t: both eigenvalues are too small to register.
+  else{const edgeLimit=Math.sqrt(threshold/s.k);verdict.textContent=lambda1<=edgeLimit?`Flat: λ₁ = ${harrisNumber(lambda1)} is below √(t/κ) = ${harrisNumber(edgeLimit)}, so even a perfect edge this weak would not reach R < −t, and λ₂ is too small for R > t. Shifting the window changes it too little to count.`:`Between edge and corner: λ₂ = ${ratio.toFixed(2)} λ₁. λ₂ is too large for R to drop below −t and too small for R to exceed t, so R falls in the band |R| ≤ t around 0 and the window counts as neither edge nor corner.`}
   return{lambda1,lambda2,kind};
 }
 
 function sampleHarrisEigenvalues(first,w,h,margin){
   const step=Math.max(1,Math.round(Math.sqrt(w*h/2400))),points=[];
   for(let y=margin;y<h-margin;y+=step)for(let x=margin;x<w-margin;x+=step){const i=y*w+x;points.push(harrisEigen(first.a[i],first.b[i],first.c[i]))}
-  return points;
+  points.step=step;return points;
 }
 
 function drawHarrisPlane(target,samples,probe,k,threshold){
@@ -890,7 +910,7 @@ function drawHarrisPlane(target,samples,probe,k,threshold){
   context.fillStyle='#666';context.font='10px ui-monospace, monospace';context.textAlign='center';
   context.fillText('λ₁ · larger eigenvalue (√ scale)',margin.left+plotW/2,height-8);
   context.save();context.translate(13,margin.top+plotH/2);context.rotate(-Math.PI/2);context.fillText('λ₂ · smaller (√ scale)',0,0);context.restore();
-  context.textAlign='right';context.fillText('0',margin.left-4,margin.top+plotH+12);context.fillText(harrisNumber(extent*extent),margin.left+plotW,margin.top+plotH+12);
+  context.textAlign='right';context.fillText('0',margin.left-4,margin.top+plotH+12);context.fillText(harrisNumber(extent*extent),margin.left+plotW,margin.top+plotH+12);context.fillText(harrisNumber(extent*extent),margin.left-4,margin.top+9);
   context.save();context.translate(margin.left+plotW*.72,margin.top+plotH*.28-6);context.rotate(-Math.atan2(plotH,plotW));context.textAlign='center';context.fillText('λ₁ = λ₂',0,0);context.restore();
   context.textAlign='left';context.fillStyle='#9a9a9a';context.fillText('λ₂ ≤ λ₁ by definition',margin.left+8,margin.top+16);
 }
@@ -915,17 +935,22 @@ function renderHarris(experiment){
   drawHarrisCorners('harrisPost',view.canvas,firstPeaks.corners);
   renderSobelOrientation('harrisGradient',first.gradient,w,h);
   drawHarrisResponseMap('harrisResponse',first.response,w,h);
-  drawHarrisCandidates('harrisCandidates',view.gray,w,h,firstPeaks.candidates);
-  drawHarrisCandidates('harrisMaxima',view.gray,w,h,firstPeaks.candidates,firstPeaks.corners);
-  ['harrisGradient','harrisResponse','harrisCandidates','harrisMaxima'].forEach(id=>drawHarrisProbe($('#'+id),probe,s.sigma));
+  drawHarrisCandidates('harrisCandidates',view.gray,w,h,firstPeaks.candidates,margin);
+  drawHarrisCandidates('harrisMaxima',view.gray,w,h,firstPeaks.candidates,margin,firstPeaks.corners);
+  ['harrisPost','harrisGradient','harrisResponse','harrisCandidates','harrisMaxima'].forEach(id=>drawHarrisProbe($('#'+id),probe,s.sigma));
   const probed=renderHarrisInspector(first,probe,s,threshold,margin,firstPeaks.corners);
-  drawHarrisPlane($('#harrisPlane'),sampleHarrisEigenvalues(first,w,h,margin),probed,s.k,threshold);
-  drawHarrisCorners('harrisFirstView',view.canvas,firstPeaks.corners,match.firstMatched);
-  drawHarrisCorners('harrisSecondView',second.canvas,secondPeaks.corners,match.secondMatched);
+  const samples=sampleHarrisEigenvalues(first,w,h,margin);
+  drawHarrisPlane($('#harrisPlane'),samples,probed,s.k,threshold);
+  $('#harrisPlaneMeta').textContent=`√ axes · grey dots = windows every ${samples.step} px`;
+  // Same CSS scale for both views, so zooming visibly changes the size.
+  const widest=Math.max(w,second.w);
+  const markerRadius=Math.max(3.5,Math.max(w,h)/130);
+  [[drawHarrisCorners('harrisFirstView',view.canvas,firstPeaks.corners,match.firstMatched,markerRadius),w],[drawHarrisCorners('harrisSecondView',second.canvas,secondPeaks.corners,match.secondMatched,markerRadius),second.w]].forEach(([target,width])=>{target.style.width=`${width/widest*100}%`;target.style.maxHeight='none'});
 
   const count=firstPeaks.corners.length,rate=match.visible?Math.round(match.repeated/match.visible*100):0;
   setHarrisMeta('harrisPost',`${count} corners`);
-  setHarrisMeta('harrisCandidates',`${firstPeaks.candidateCount.toLocaleString()} pixels with R > t`);
+  setHarrisMeta('harrisPre',`${w} × ${h} working copy`);
+  setHarrisMeta('harrisCandidates',`${firstPeaks.candidateCount.toLocaleString()} px with R > t · ${margin}-px border skipped`);
   setHarrisMeta('harrisMaxima',`${count} local maxima kept`);
   setHarrisMeta('harrisFirstView',`${count} corners · ${w} × ${h}`);
   setHarrisMeta('harrisSecondView',`${s.rotation}° · ${s.scale}% · contrast ${s.contrast}% · ${secondPeaks.corners.length} corners`);
@@ -952,7 +977,7 @@ const PHOTO_CHOICES=[
 let naturalPhotoApplied=false;
 
 function photoChooser(id){
-  return `<div class="photo-chooser" id="${id}" role="group" aria-label="Choose the image"><span>Image</span>${PHOTO_CHOICES.map(photo=>`<button type="button" data-url="${photo.url}" class="${state.url===photo.url?'active':''}" aria-pressed="${state.url===photo.url}"><img src="${photo.thumb}" alt="" loading="lazy"><em>${photo.label}</em></button>`).join('')}<button type="button" data-action="sample" class="${state.url==='sample'?'active':''}" aria-pressed="${state.url==='sample'}"><b>CV</b><em>Synthetic</em></button><button type="button" data-action="upload"><b>⤒</b><em>Upload…</em></button></div>`;
+  return `<div class="photo-chooser" id="${id}" role="group" aria-label="Choose the image"><span>Image</span>${PHOTO_CHOICES.map(photo=>`<button type="button" data-url="${photo.url}" class="${state.url===photo.url?'active':''}" aria-pressed="${state.url===photo.url}"><img src="${photo.thumb}" alt="" loading="lazy"><em>${photo.label}</em></button>`).join('')}<button type="button" data-action="sample" class="${state.url==='sample'?'active':''}" aria-pressed="${state.url==='sample'}"><b>CV</b><em>Sample</em></button><button type="button" data-action="upload"><b>⤒</b><em>Upload…</em></button></div>`;
 }
 function bindPhotoChooser(id){
   $('#'+id).onclick=event=>{
@@ -963,7 +988,8 @@ function bindPhotoChooser(id){
   };
 }
 // The built-in synthetic sample has too few corners for these pages, so the first visit swaps in
-// a photograph once; afterwards the user's choice, including the synthetic sample, is kept.
+// a photograph once, unless the user picked the sample from the toolbar; afterwards the user's
+// choice, including the synthetic sample, is kept.
 function ensureNaturalPhoto(url){
   if(naturalPhotoApplied||state.url!=='sample')return false;
   naturalPhotoApplied=true;
@@ -973,7 +999,7 @@ function ensureNaturalPhoto(url){
 }
 
 const ANMS_WORKING_SIZE=480;
-const ANMS_GRID=[8,6];
+const ANMS_GRID=[8,6],ANMS_MIN_BUDGET=50;
 const anmsRuntime={token:0,view:null,points:null,order:null,radii:null,suppressor:null,robustness:null};
 
 function mountAnms(experiment){
@@ -982,16 +1008,16 @@ function mountAnms(experiment){
   const s=experiment.state;
   root.innerHTML=`${photoChooser('anmsPhotos')}
   <div class="controls">
-    ${controlRange('anmsBudget','Keypoints kept · N',50,600,s.budget,10)}
+    ${controlRange('anmsBudget','Keypoints kept · N',ANMS_MIN_BUDGET,600,s.budget,10)}
     ${controlRange('anmsRobust','“Significantly stronger” factor · c',1,1.5,s.robustness,.05)}
   </div>
   <div class="anms-intro">
     <section class="gabor-formula anms-formula" aria-label="Suppression radius">
       <span class="gabor-kicker">Slide 26 · Brown, Szeliski &amp; Winder 2005</span>
       <div class="gabor-equation"><i>r<sub>i</sub></i> = min<sub><i>j</i> : <i>R<sub>j</sub></i> &gt; <i>c R<sub>i</sub></i></sub> ‖<b>x</b><sub><i>i</i></sub> − <b>x</b><sub><i>j</i></sub>‖</div>
-      <p>Candidates are Harris local maxima (3 × 3 neighborhood, R above 0.01% of the strongest response, at least 6 px from the border). A candidate’s radius is the distance to the nearest <b>significantly stronger</b> candidate, one whose response exceeds c times its own. ANMS keeps the N candidates with the largest radii. Points that no candidate beats by a factor c, including the strongest corner, get r = ∞ and are always kept. With larger c only a much stronger neighbor can suppress a point, so corners of similar strength survive side by side and the spread becomes less even; c = 1 spaces the points most evenly.</p>
+      <p>Candidates are Harris local maxima (3 × 3 neighborhood, R above 0.01% of the strongest response, at least 6 px from the border). A candidate’s radius is the distance to the nearest <b>significantly stronger</b> candidate, one whose response exceeds c times its own. ANMS keeps the N candidates with the largest radii. Points that no candidate beats by a factor c, including the strongest corner, get r = ∞ and rank first. The r in each ANMS caption is the smallest kept radius, not a spacing: every kept point is at least r from any significantly stronger candidate, but two kept corners of similar strength can sit closer than r. Larger c makes such pairs more common and the spread less even; at c = 1, kept points of different strength are always at least r apart.</p>
     </section>
-    <section class="harris-inspector anms-inspector" aria-live="polite"><header><b>Selected candidate</b><small id="anmsPickMeta">click a point in any panel</small></header><p class="harris-verdict" id="anmsPickText">Click a point in any panel.</p><p class="anms-key">In (c) and (d) the dashed circle is the selected point’s suppression radius and the line joins it to the stronger candidate that sets it. In every panel a yellow ring means that panel keeps the selected point and a red ring means it drops it.</p></section>
+    <section class="harris-inspector anms-inspector" aria-live="polite"><header><b>Selected candidate</b><small id="anmsPickMeta">click a point in any panel</small></header><p class="harris-verdict" id="anmsPickText">Click a point in any panel.</p><p class="anms-key">In (c) and (d) the dashed circle is the selected point’s suppression radius and the line joins it to the significantly stronger candidate that sets it (cyan square). In every panel a yellow ring means that panel keeps the selected point and a red ring means it drops it. Faint lines mark the grid cells used for coverage.</p></section>
   </div>
   <div class="gabor-section-title harris-section-title"><div><b>Strongest N versus adaptive NMS</b><small>All four panels use the same Harris candidates; click any point to inspect it. Grid coverage counts how many of the ${ANMS_GRID[0]} × ${ANMS_GRID[1]} image cells contain at least one keypoint. Coordinates and radii are in pixels of the working image.</small></div><span id="anmsStatus" role="status">Computing…</span></div>
   <div class="note anms-warning" id="anmsWarning" hidden></div>
@@ -1032,9 +1058,10 @@ function prepareAnms(){
 function suppressionRadii(points,robustness){
   const n=points.length,radii=new Float64Array(n),suppressor=new Int32Array(n).fill(-1);
   for(let i=0;i<n;i++){
+    // Squared integer distances compare exactly, so equal radii tie-break by response (as numpy's stable sort does).
     const threshold=robustness*points[i].response;let best=Infinity,who=-1;
-    for(let j=0;j<n&&points[j].response>threshold;j++){const d=Math.hypot(points[i].x-points[j].x,points[i].y-points[j].y);if(d<best){best=d;who=j}}
-    radii[i]=best;suppressor[i]=who;
+    for(let j=0;j<n&&points[j].response>threshold;j++){const dx=points[i].x-points[j].x,dy=points[i].y-points[j].y,d=dx*dx+dy*dy;if(d<best){best=d;who=j}}
+    radii[i]=Math.sqrt(best);suppressor[i]=who;
   }
   const order=Array.from({length:n},(_,i)=>i).sort((a,b)=>radii[b]-radii[a]||points[b].response-points[a].response);
   return{radii,suppressor,order};
@@ -1055,16 +1082,19 @@ function renderAnms(experiment){
   const s=experiment.state,started=performance.now();
   if(!anmsRuntime.view){const prepared=prepareAnms();anmsRuntime.view=prepared.view;anmsRuntime.points=prepared.points}
   if(anmsRuntime.robustness!==s.robustness){Object.assign(anmsRuntime,suppressionRadii(anmsRuntime.points,s.robustness));anmsRuntime.robustness=s.robustness}
-  // Start on the weakest corner that ANMS keeps: it shows why an isolated weak point survives.
-  if(!s.selected&&anmsRuntime.order.length){const kept=anmsRuntime.order.slice(0,Math.min(s.budget,anmsRuntime.points.length)),weakest=Math.max(...kept);s.selected={x:anmsRuntime.points[weakest].x,y:anmsRuntime.points[weakest].y}}
+  // Start on a typical point that ANMS keeps and strongest-N drops (median response rank among them),
+  // not the weakest one, which is often a near-noise candidate in a smooth region.
+  if(!s.selected&&anmsRuntime.order.length){const N=Math.min(s.budget,anmsRuntime.points.length),kept=anmsRuntime.order.slice(0,N),gained=kept.filter(i=>i>=N).sort((a,b)=>a-b),pick=gained.length?gained[Math.floor((gained.length-1)/2)]:Math.max(...kept);s.selected={x:anmsRuntime.points[pick].x,y:anmsRuntime.points[pick].y}}
   const {points,radii,suppressor,view}=anmsRuntime,n=points.length,selected=s.selected?points.reduce((best,p,i)=>{const d=Math.hypot(p.x-s.selected.x,p.y-s.selected.y);return d<best.d?{i,d}:best},{i:-1,d:2}).i:-1;
   const panels=[['anmsStrongA',`(a) Strongest ${Math.min(s.budget,n)}`],['anmsStrongB',`(b) Strongest ${Math.min(2*s.budget,n)}`],['anmsAdaptA',`(c) ANMS ${Math.min(s.budget,n)}`],['anmsAdaptB',`(d) ANMS ${Math.min(2*s.budget,n)}`]];
   panels.forEach(([id,title])=>{
     const indices=anmsShown(id,s),adaptive=id.startsWith('anmsAdapt'),target=canvas(id,view.canvas),ctx=target.getContext('2d'),r=Math.max(2.2,view.w/190);
     ctx.fillStyle='rgba(0,0,0,.25)';ctx.fillRect(0,0,view.w,view.h);
-    const keep=new Set(indices);
-    if(selected>=0&&adaptive&&Number.isFinite(radii[selected])){const p=points[selected],q=points[suppressor[selected]];ctx.setLineDash([5,4]);ctx.strokeStyle='#facc15';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x+.5,p.y+.5,radii[selected],0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(p.x+.5,p.y+.5);ctx.lineTo(q.x+.5,q.y+.5);ctx.stroke()}
+    const keep=new Set(indices),[cols,rows]=ANMS_GRID;
+    ctx.strokeStyle='rgba(255,255,255,.22)';ctx.lineWidth=1;ctx.beginPath();for(let i=1;i<cols;i++){const x=Math.round(i*view.w/cols)+.5;ctx.moveTo(x,0);ctx.lineTo(x,view.h)}for(let j=1;j<rows;j++){const y=Math.round(j*view.h/rows)+.5;ctx.moveTo(0,y);ctx.lineTo(view.w,y)}ctx.stroke();
+    if(selected>=0&&adaptive&&Number.isFinite(radii[selected])){const p=points[selected],q=points[suppressor[selected]],color=keep.has(selected)?'#facc15':'#ef4444';ctx.setLineDash([5,4]);ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x+.5,p.y+.5,radii[selected],0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(p.x+.5,p.y+.5);ctx.lineTo(q.x+.5,q.y+.5);ctx.stroke()}
     indices.forEach(i=>{const p=points[i];ctx.beginPath();ctx.arc(p.x+.5,p.y+.5,r,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.lineWidth=1.2;ctx.strokeStyle='#111';ctx.stroke()});
+    if(selected>=0&&adaptive&&Number.isFinite(radii[selected])){const q=points[suppressor[selected]],side=2*r+4;ctx.lineWidth=2.5;ctx.strokeStyle='#22d3ee';ctx.strokeRect(q.x+.5-side/2,q.y+.5-side/2,side,side)}
     if(selected>=0){const p=points[selected];ctx.beginPath();ctx.arc(p.x+.5,p.y+.5,r+3,0,Math.PI*2);ctx.lineWidth=2.5;ctx.strokeStyle=keep.has(selected)?'#facc15':'#ef4444';ctx.stroke()}
     const coverage=anmsCoverage(indices),radius=adaptive&&indices.length?radii[indices.at(-1)]:null;
     $('#'+id).closest('.card').querySelector('figcaption span').textContent=adaptive&&radius!=null?`${title}, r = ${Number.isFinite(radius)?radius.toFixed(1):'∞'}`:title;
@@ -1074,13 +1104,13 @@ function renderAnms(experiment){
     const p=points[selected],rank=anmsRuntime.order.indexOf(selected)+1,strength=selected+1;
     $('#anmsPickMeta').textContent=`(${p.x}, ${p.y}) · response rank ${strength} · radius rank ${rank}`;
     const text=$('#anmsPickText');
-    if(!Number.isFinite(radii[selected])){text.className='harris-verdict kept';text.textContent=selected===0?'This is the strongest candidate in the image: no other point is stronger, so r = ∞ and ANMS always keeps it.':`No candidate is more than ${s.robustness.toFixed(2)}× stronger than this one (the strongest is only ${(points[0].response/p.response).toFixed(2)}× stronger), so r = ∞ and ANMS always keeps it.`}
+    if(!Number.isFinite(radii[selected])){const kept=rank<=Math.min(s.budget,n);text.className=`harris-verdict ${kept?'kept':'dropped'}`;text.textContent=selected===0?'This is the strongest candidate in the image: no other point is stronger, so r = ∞ and ANMS always keeps it.':`No candidate is more than ${s.robustness.toFixed(2)}× stronger than this one (the strongest is only ${(points[0].response/p.response).toFixed(2)}× stronger), so r = ∞. Its radius ranks ${rank}, ${kept?'inside':'outside'} the ANMS budget of ${Math.min(s.budget,n)}${strength<=s.budget?`, and strongest-N keeps it too (response rank ${strength}).`:`, while strongest-N drops it (response rank ${strength}).`}`}
     else{const q=points[suppressor[selected]],ratio=q.response/p.response,kept=rank<=Math.min(s.budget,n);text.className=`harris-verdict ${kept?'kept':'dropped'}`;text.textContent=`r = ${radii[selected].toFixed(1)} px: the nearest candidate with R > ${s.robustness.toFixed(2)} × R(this) is at (${q.x}, ${q.y}), ${ratio.toFixed(2)}× stronger. ${kept?`Its radius ranks ${rank}, inside the ANMS budget of ${Math.min(s.budget,n)}`:`Its radius ranks ${rank}, outside the ANMS budget of ${Math.min(s.budget,n)}`}${strength<=s.budget?`, and strongest-N keeps it too (response rank ${strength}).`:`, while strongest-N drops it (response rank ${strength}).`}`}
   }
   const ceiling=Math.round(anmsCoverage(points.map((_,i)=>i))*100),warning=$('#anmsWarning');
   $('#anmsStatus').textContent=`${n.toLocaleString()} Harris candidates · all of them cover ${ceiling}% of cells · ${view.w} × ${view.h} px working image`;
   warning.hidden=2*s.budget<n;
-  warning.textContent=Math.floor(n/2)<=50?`This image has only ${n} Harris candidates, too few for a meaningful comparison: even at the smallest N every panel shows ${2*50>=n?'all':'most'} of them. Choose a photograph.`:`This image has only ${n} Harris candidates, so ${s.budget>=n?'all four panels show every candidate':'panels (b) and (d) show every candidate'}. Lower N below ${Math.floor(n/2)} to compare the two selections.`;
+  warning.textContent=n<=ANMS_MIN_BUDGET?`This image has only ${n} Harris candidates, so every panel shows all of them at any N and the two selections cannot differ. Choose a photograph.`:n<=2*ANMS_MIN_BUDGET+1?`This image has only ${n} Harris candidates, too few for a meaningful comparison: even at the smallest N = ${ANMS_MIN_BUDGET}, panels (b) and (d) show ${n<=2*ANMS_MIN_BUDGET?'every candidate':'all but one of them'}. Choose a photograph.`:`This image has only ${n} Harris candidates, so ${s.budget>=n?'all four panels show every candidate':'panels (b) and (d) show every candidate'}. Lower N below ${Math.ceil(n/2)} to compare the two selections.`;
   state.output=$('#anmsAdaptA');
 }
 
@@ -2124,29 +2154,42 @@ def gabor_power(image, theta=0, sigma=4, wavelength=10):
     return kernel, np.sqrt(real**2 + imaginary**2)`,
 
   harris:`import numpy as np
-from skimage.feature import corner_harris, corner_peaks
+from scipy import ndimage as ndi
+from skimage.feature import corner_peaks
 
 def harris_corners(image, sigma=1.5, k=0.05, threshold=0.01, nms_radius=4):
+    """image: RGB(A) uint8 array; the page's 480-px working copy reproduces its corners exactly."""
     gray = np.asarray(image, dtype=float)[..., :3] @ [0.299, 0.587, 0.114] / 255
-    # Replicate border pixels so the image frame does not become an artificial corner.
-    pad = int(4 * sigma) + 2
-    padded = np.pad(gray, pad, mode="edge")
-    # Steps 1-2: Sobel gradients, Gaussian-weighted M, R = det(M) - k trace(M)^2
-    response = corner_harris(padded, method="k", k=k, sigma=sigma)[pad:-pad, pad:-pad]
+    # Step 1: Sobel gradients; border pixels are replicated, so the frame is not an edge
+    gx = ndi.sobel(gray, axis=1, mode="nearest")
+    gy = ndi.sobel(gray, axis=0, mode="nearest")
+    # Step 2: M = sum of w(x, y) [Ix^2, IxIy; IxIy, Iy^2] with a Gaussian w cut at 3 sigma,
+    # then R = det(M) - k trace(M)^2  (k is the slides' kappa)
+    w = lambda a: ndi.gaussian_filter(a, sigma, mode="nearest", radius=max(1, int(np.ceil(3 * sigma))))  # SciPy >= 1.10
+    A, B, C = w(gx * gx), w(gx * gy), w(gy * gy)
+    R = A * C - B * B - k * (A + C) ** 2
     # Steps 3-4: keep R > threshold * max(R), then non-maximum suppression
     border = max(nms_radius, int(np.ceil(3 * sigma)) + 2)
-    corners = corner_peaks(response, min_distance=nms_radius,
+    corners = corner_peaks(R, min_distance=nms_radius,
                            threshold_rel=threshold, exclude_border=border)
-    return response, corners  # corners are (row, column) pairs`,
+    return R, corners  # corners are (row, column) pairs`,
 
   greedyNms:NMS_PYTHON_SAMPLE,
 
   anms:`import numpy as np
-from skimage.feature import corner_harris, peak_local_max
+from scipy import ndimage as ndi
+from skimage.feature import peak_local_max
 
-def adaptive_nms(gray, n=250, c=1.1, sigma=1.5):
-    pad = int(4 * sigma) + 2  # edge padding, as on the Harris page
-    response = corner_harris(np.pad(gray, pad, mode="edge"), method="k", k=0.05, sigma=sigma)[pad:-pad, pad:-pad]
+def harris_response(gray, sigma=1.5, k=0.05):  # steps 1-2 of the Harris page
+    gx = ndi.sobel(gray, axis=1, mode="nearest")
+    gy = ndi.sobel(gray, axis=0, mode="nearest")
+    w = lambda a: ndi.gaussian_filter(a, sigma, mode="nearest", radius=max(1, int(np.ceil(3 * sigma))))
+    A, B, C = w(gx * gx), w(gx * gy), w(gy * gy)
+    return A * C - B * B - k * (A + C) ** 2
+
+def adaptive_nms(gray, n=250, c=1.1):
+    """gray: the page's 480-px working image as floats in [0, 1]; radii are in its pixels."""
+    response = harris_response(gray)
     peaks = peak_local_max(response, min_distance=1, threshold_rel=1e-4, exclude_border=6)  # 3 x 3 maxima
     strength = response[peaks[:, 0], peaks[:, 1]]
     order = np.argsort(-strength)[:4000]
@@ -2156,7 +2199,7 @@ def adaptive_nms(gray, n=250, c=1.1, sigma=1.5):
         stronger = strength > c * strength[i]        # significantly stronger candidates
         if stronger.any():
             radius[i] = np.linalg.norm(peaks[stronger] - peaks[i], axis=1).min()
-    keep = np.argsort(-radius, kind="stable")[:n]
+    keep = np.argsort(-radius, kind="stable")[:n]   # equal radii: the stronger candidate first
     return peaks[:n], peaks[keep], radius[keep[-1]]  # strongest n, ANMS n, its radius r`,
 
   siftDescriptor:SIFT_PYTHON_SAMPLE,
@@ -2244,9 +2287,9 @@ function guideFor(id){
   if(id==='hough')return{overview:'All three sliders affect either the edge candidates, accumulator peaks, or rendered lines. Only the accumulator visual is remapped with nearest-neighbor sampling to match the input image aspect ratio.',params:[param('Edge threshold',s.edgeThreshold,'Minimum Sobel magnitude required for a pixel to vote.'),param('Peak threshold',`${s.voteThreshold}%`,'Minimum accumulator value as a percentage of the strongest vote.'),param('Maximum lines',s.lines,'Caps the number of separated accumulator peaks drawn on the image.'),param('Accumulator display','Input aspect ratio','Changes only the displayed Hough-space shape; the underlying θ–ρ votes and detected peaks are unchanged.')],links:[link('Hough transform',WIKI.hough)]};
   if(id==='template')return{overview:'There are no sliders. The dragged rectangle is the tunable input: its position and dimensions define the template patch.',params:[param('Patch',s.rect?`${Math.round(s.rect.w)} × ${Math.round(s.rect.h)}`:'Not selected','The selected pixels are compared at every valid source position using CC and zero-mean normalized CC.',Boolean(s.rect))],links:[link('Template matching',WIKI.template),link('Cross-correlation',WIKI.correlation)]};
   if(id==='gabor')return{overview:'The selected parameters define one complex member of a Gabor filter bank. Each grayscale texture is standardized, convolved with the raw real and imaginary kernel components using wrap boundaries, and shown as phase-invariant power. Response maps share one fixed display range, and the kernel preview uses one fixed spatial frame.',params:[param('Gamma',s.gamma.toFixed(2),'Controls the vertical aspect ratio of the Gaussian envelope. Gamma = 1 matches the circular envelope in the supplied Python reference; smaller values stretch it vertically.'),param('Sigma',s.sigma.toFixed(2),'Controls the Gaussian decay and therefore the spatial extent of the kernel.'),param('Omega',`${s.omega}°`,'Maps to theta in gabor_kernel and changes the preferred orientation of the sinusoidal carrier without changing the preview scale.'),param('Lambda',`${s.lambda.toFixed(1)} px`,'Sets frequency to 1 / lambda. Shorter wavelengths respond to finer texture cycles.'),param('Power','√(real² + imaginary²)','Combines the quadrature responses so the displayed magnitude does not depend on local phase.'),param('Display scales','Fixed','The response brightness range and the kernel preview’s pixel field are constant as parameters change.')],links:[link('Gabor filter',WIKI.gabor),link('Gabor filter banks for texture classification',WIKI.gaborBank)]};
-  if(id==='harris')return{overview:'Steps 1–4 follow the slide: Sobel gradients at each pixel, a Gaussian-weighted second-moment matrix M for each window with cornerness R = det(M) − k·trace(M)², a threshold on R, then non-maximum suppression. Click a step image to inspect M and its eigenvalues at that window. The second view reuses the first view’s absolute threshold, so its corner counts are directly comparable.',params:[param('Window sigma',s.sigma.toFixed(2),'Standard deviation of the Gaussian window w(x, y) that sums Ix², IxIy, and Iy² into M. Larger windows average over larger structures and suppress fine texture.'),param('k',s.k.toFixed(3),'Weight of trace(M)² in R. Larger k requires the two eigenvalues to be more similar before R becomes positive; 0.04–0.06 is typical, and k ≥ 0.25 rejects every window.'),param('Threshold',`${s.threshold.toFixed(1)}% of max R`,'Step 3 keeps pixels whose R exceeds this fraction of the strongest first-view response. The resulting absolute value t is reused for the second view.'),param('NMS radius',`${s.nms} px`,'Step 4 keeps a candidate only if it has the largest R in its (2r + 1) × (2r + 1) neighborhood, which also sets the minimum spacing between corners.'),param('Second view',`${s.rotation}° · ${s.scale}% · contrast ${s.contrast}%`,`Rotates, rescales, and changes the contrast of the loaded image before running the identical detector. Repeatability is the share of first-view corners that land inside the second view and have a second-view corner within ${HARRIS_MATCH_TOLERANCE} px of their transformed position.`)],links:[link('Harris corner detector',WIKI.harris),link('Structure tensor',WIKI.structureTensor),link('Corner detection',WIKI.cornerDetection),link('Non-maximum suppression',WIKI.harrisNms)]};
+  if(id==='harris')return{overview:'Steps 1–4 follow slide 24: Sobel gradients at each pixel, a Gaussian-weighted second-moment matrix M for each window with cornerness R = det(M) − κ·trace(M)², a threshold on R, then non-maximum suppression. Click the Post image or a step image to inspect M and its eigenvalues at that window. Corners are only looked for at least max(NMS radius, ⌈3σ⌉ + 2) px from the border (the hatched band), so the whole Gaussian window and NMS neighborhood lie inside the image. The second view reuses the first view’s absolute threshold, so its corner counts are directly comparable.',params:[param('Window sigma',s.sigma.toFixed(2),'Standard deviation of the Gaussian window w(x, y) that sums Ix², IxIy, and Iy² into M. Larger windows average over larger structures and suppress fine texture.'),param('κ',s.k.toFixed(3),'Weight of trace(M)² in R (κ on the slides, k in scikit-image). Larger κ requires the two eigenvalues to be more similar before R becomes positive; 0.04–0.06 is typical, and κ ≥ 0.25 rejects every window.'),param('Threshold',`${s.threshold.toFixed(1)}% of max R`,'Step 3 keeps pixels whose R exceeds this fraction of the strongest first-view response. The resulting absolute value t is reused for the second view.'),param('NMS radius',`${s.nms} px`,'Step 4 keeps a candidate only if it has the largest R in its (2r + 1) × (2r + 1) neighborhood, so two kept corners are always more than r px apart. A radius above ⌈3σ⌉ + 2 also widens the skipped border band, as scikit-image’s corner_peaks does by default.'),param('Second view',`${s.rotation}° · ${s.scale}% · contrast ${s.contrast}%`,`Rotates, rescales, and changes the contrast of the loaded image before running the identical detector. Repeatability is the share of first-view corners that land in the second view’s search area (outside its skipped border band) and pair one-to-one with a second-view corner within ${HARRIS_MATCH_TOLERANCE} px (in second-view pixels) of their transformed position.`)],links:[link('Harris corner detector',WIKI.harris),link('Structure tensor',WIKI.structureTensor),link('Corner detection',WIKI.cornerDetection),link('Non-maximum suppression',WIKI.harrisNms)]};
   if(id==='greedyNms')return nmsGuide(s);
-  if(id==='anms')return{overview:'Candidates are Harris corners (σ = 1.5, k = 0.05) that are local maxima in a 3 × 3 neighborhood, with R above 0.01% of the maximum, at least 6 px from the border, capped at the strongest 4000. Strongest-N sorts them by response; adaptive NMS sorts them by suppression radius, the distance to the nearest candidate whose response exceeds c times their own.',params:[param('Keypoints kept',`N = ${s.budget}`,'The keypoint budget. Panels (a) and (c) keep N points; panels (b) and (d) keep 2N, as on the slide.'),param('Robustness factor',`c = ${s.robustness.toFixed(2)}`,'A neighbor suppresses a candidate only if its response exceeds c times the candidate’s. Brown et al. write the condition as f(xᵢ) < 0.9 f(xⱼ), which is c ≈ 1.1 here: only a clearly stronger neighbor counts. Larger c keeps more similar-strength neighbors side by side.'),param('Radius r','smallest kept radius','The caption of each ANMS panel reports the N-th largest suppression radius: every kept point is at least r away from any candidate more than c times stronger. At c = 1 this is also the minimum spacing between kept points.')],links:[link('Brown, Szeliski and Winder 2005 (MOPS)','https://www.microsoft.com/en-us/research/publication/multi-image-matching-using-multi-scale-oriented-patches/'),link('Szeliski: Computer Vision, 2nd ed.','https://szeliski.org/Book/'),link('Harris corner detector',WIKI.harris),link('Non-maximum suppression',WIKI.harrisNms)]};
+  if(id==='anms')return{overview:'Candidates are Harris corners (σ = 1.5, κ = 0.05) that are local maxima in a 3 × 3 neighborhood, with R above 0.01% of the maximum, at least 6 px from the border, capped at the strongest 4000. Strongest-N sorts them by response; adaptive NMS sorts them by suppression radius, the distance to the nearest candidate whose response exceeds c times their own.',params:[param('Keypoints kept',`N = ${s.budget}`,'The keypoint budget. Panels (a) and (c) keep N points; panels (b) and (d) keep 2N, as on the slide.'),param('Robustness factor',`c = ${s.robustness.toFixed(2)}`,'A neighbor suppresses a candidate only if its response exceeds c times the candidate’s. Brown et al. write the condition as f(xᵢ) < 0.9 f(xⱼ), which is c ≈ 1.1 here: only a clearly stronger neighbor counts. Larger c keeps more similar-strength neighbors side by side.'),param('Radius r','smallest kept radius','The caption of each ANMS panel reports the N-th largest suppression radius: every kept point is at least r away from any candidate more than c times stronger. It is not the spacing of the kept points: at c > 1 two kept points of similar strength can be closer than r, and at c = 1 r is a lower bound on the spacing between kept points of different strength.')],links:[link('Brown, Szeliski and Winder 2005 (MOPS)','https://www.microsoft.com/en-us/research/publication/multi-image-matching-using-multi-scale-oriented-patches/'),link('Szeliski: Computer Vision, 2nd ed.','https://szeliski.org/Book/'),link('Harris corner detector',WIKI.harris),link('Non-maximum suppression',WIKI.harrisNms)]};
   if(id==='siftDescriptor')return siftGuide(s);
   if(id==='ratioTest')return ratioGuide(s);
   if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants. Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',s.pyramidLevels,'Adds coarser resolutions before the full-resolution refinement. The display shows one more resolution than the number of downsampling steps.'),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
@@ -2371,7 +2414,7 @@ async function setupGallery(){
   });
   document.addEventListener('keydown',event=>{if(event.key==='Escape')closeImagePicker()});
 }
-function bindGlobal(){$('#fileInput').onchange=e=>load(e.target.files[0]);$('#sampleButton').onclick=sample;$('#downloadButton').onclick=()=>{if(!state.output)return;const a=document.createElement('a');a.download=`cv-lab-${state.active}.png`;a.href=state.output.toDataURL('image/png');a.click()};['dragenter','dragover'].forEach(n=>document.addEventListener(n,e=>{e.preventDefault();$('#dropZone').classList.add('visible')}));document.addEventListener('dragleave',e=>{if(!e.relatedTarget)$('#dropZone').classList.remove('visible')});document.addEventListener('drop',e=>{e.preventDefault();$('#dropZone').classList.remove('visible');load(e.dataTransfer.files[0])})}
+function bindGlobal(){$('#fileInput').onchange=e=>load(e.target.files[0]);$('#sampleButton').onclick=()=>{naturalPhotoApplied=true;sample()};$('#downloadButton').onclick=()=>{if(!state.output)return;const a=document.createElement('a');a.download=`cv-lab-${state.active}.png`;a.href=state.output.toDataURL('image/png');a.click()};['dragenter','dragover'].forEach(n=>document.addEventListener(n,e=>{e.preventDefault();$('#dropZone').classList.add('visible')}));document.addEventListener('dragleave',e=>{if(!e.relatedTarget)$('#dropZone').classList.remove('visible')});document.addEventListener('drop',e=>{e.preventDefault();$('#dropZone').classList.remove('visible');load(e.dataTransfer.files[0])})}
 
 const refreshParameterGuide=()=>queueMicrotask(()=>renderParameterGuide(state.active));
 root.addEventListener('input',refreshParameterGuide);
