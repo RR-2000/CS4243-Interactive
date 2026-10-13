@@ -527,10 +527,10 @@ function drawFlowArrow(context,x,y,u,v,scale,color,width){
   if(Math.hypot(u,v)*scale>4){context.beginPath();context.moveTo(endX,endY);context.lineTo(endX-head*Math.cos(angle-.55),endY-head*Math.sin(angle-.55));context.lineTo(endX-head*Math.cos(angle+.55),endY-head*Math.sin(angle+.55));context.closePath();context.fill()}
 }
 
-function drawFlowPanel(id,tracks,isMulti){
+function drawFlowPanel(id,tracks,isMulti,progress=1){
   const canvasElement=$('#'+id);if(!canvasElement||!flowRuntime.frameA)return;
   const experiment=experiments.find(item=>item.id==='opticalFlow');
-  const scale=Number(experiment.state.arrowScale??1);
+  const scale=Number(experiment.state.arrowScale??1)*progress;
   const background=experiment.state.viewFrame==='B'?flowRuntime.frameB:flowRuntime.frameA;
   canvasElement.width=flowRuntime.frameA.w;canvasElement.height=flowRuntime.frameA.h;
   const context=canvasElement.getContext('2d');context.drawImage(background.canvas,0,0);
@@ -623,9 +623,13 @@ function drawOriginalFlowFrame(progress){
 
 function animateOpticalFlow(timestamp,token){
   if(token!==flowRuntime.token||state.active!=='opticalFlow')return;
-  const phase=(timestamp%1500)/1500,progress=.15+.85*(.5-.5*Math.cos(phase*Math.PI*2));
+  const phase=(timestamp%1800)/1800,progress=.5-.5*Math.cos(phase*Math.PI*2);
   drawOriginalFlowFrame(progress);
-  // Comparison arrows remain fixed at their estimated displacements; only the source pair animates.
+  // Grow arrows from p to p' with a true-scale endpoint at progress = 1.
+  if(flowRuntime.ready){
+    drawFlowPanel('flowSingle',flowRuntime.single,false,progress);
+    drawFlowPanel('flowMulti',flowRuntime.multi,true,progress);
+  }
   flowRuntime.raf=requestAnimationFrame(next=>animateOpticalFlow(next,token));
 }
 
