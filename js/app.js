@@ -345,6 +345,8 @@ const FLOW_DIAGRAM_SCALE=2;
 // inherit the wrong matches of a 1–2 level run when the slider is lowered.
 const FLOW_REFERENCE_LEVELS=4;
 const FLOW_COLORS={single:'#4dd8ff',multi:'#3ddc84',recovered:'#ffd84d',lost:'#ff5a5f'};
+// Pyramid diagram only: kept distinct from the track colors above so "red" never means two things.
+const FLOW_FIT_COLORS={within:'#b39dff',beyond:'#ff9a3c'};
 const flowRuntime={token:0,raf:0,computeRaf:0,ready:false,img1:null,img2:null,gt:null,frameA:null,frameB:null,points:[],single:[],multi:[],reference:[]};
 const flowReducedMotion=()=>Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 const flowLevelsLabel=levels=>`${levels} level${levels===1?'':'s'}`;
@@ -386,7 +388,7 @@ function mountOpticalFlow(experiment){
   <div class="flow-grid flow-bottom-grid">
     ${flowCard('flowSingle','Single-scale Lucas–Kanade',`One LK solve at full resolution, starting from zero motion. It only locks on when the displacement roughly fits inside its ${FLOW_WINDOW} × ${FLOW_WINDOW} window. <span class="flow-key flow-key-cyan">Cyan arrows</span> are kept tracks; <span class="flow-key flow-key-red">red circles</span> mark points it loses but the pyramid keeps.`,'L0 only · zero initialization',`${flowMetric('kept tracks','flowSingleTracks')}${flowMetric('median |d|','flowSingleMedian')}`)}
     ${flowCard('flowMulti','Multi-scale / pyramidal Lucas–Kanade','Same points. LK starts at the coarsest level, where the motion is only a few pixels, then doubles the estimate and refines it at each finer level. <span class="flow-key flow-key-green">Green arrows</span> are kept by both methods; <span class="flow-key flow-key-yellow">yellow arrows</span> are points recovered by the pyramid (lost by single-scale).','',`${flowMetric('kept tracks','flowMultiTracks')}${flowMetric('median |d|','flowMultiMedian')}${flowMetric('recovered','flowRecovered')}`)}
-    ${flowCard('flowPyramid','Why the pyramid helps',`White square = the LK window, ${FLOW_WINDOW} × ${FLOW_WINDOW} pixels at every level. Left → right, each level doubles the image and the motion (in pixels), but not the window. <span class="flow-key flow-key-green">Green</span>: motion ≤ ${FLOW_RADIUS} px (window radius), LK can solve it from zero. <span class="flow-key flow-key-red">Red</span>: motion beyond the window; LK only gets there by starting from 2 × the estimate of the level to its left.`,'','',`<div class="flow-formula" id="flowScaleFormula">—</div>`)}
+    ${flowCard('flowPyramid','Why the pyramid helps',`White square = the LK window, ${FLOW_WINDOW} × ${FLOW_WINDOW} pixels at every level. Left → right, each level doubles the image and the motion (in pixels), but not the window. <span class="flow-key flow-key-violet">Violet</span>: motion ≤ ${FLOW_RADIUS} px (window radius), small enough for LK to start from zero. <span class="flow-key flow-key-orange">Orange</span>: larger than the radius, too far for LK without the 2 × initial guess from the level to its left.`,'','',`<div class="flow-formula" id="flowScaleFormula">—</div>`)}
   </div>
   <div class="note" id="flowPointInfo"></div>
   <div class="flow-status" id="flowStatus" role="status">Loading Sintel frames and computing the comparison…</div>
@@ -690,7 +692,7 @@ function drawFlowPyramid(){
   for(let index=0;index<levels;index++){
     const level=levels-1-index,factor=2**level,column=layout.columns[index],cx=columnX+column/2;
     const w=layout.fullWidth/factor,h=layout.fullHeight/factor,x=cx-w/2,y=imageBottom-h;
-    const displacement=magnitude/factor,fits=displacement<=FLOW_RADIUS,color=fits?FLOW_COLORS.multi:FLOW_COLORS.lost,isStart=index===0&&levels>1;
+    const displacement=magnitude/factor,fits=displacement<=FLOW_RADIUS,color=fits?FLOW_FIT_COLORS.within:FLOW_FIT_COLORS.beyond,isStart=index===0&&levels>1;
     context.drawImage(flowRuntime.frameA.canvas,x,y,w,h);
     context.strokeStyle=isStart?FLOW_COLORS.recovered:'#dbeafe';context.lineWidth=isStart?3:1.5;context.strokeRect(x,y,w,h);
     // One level pixel is `pixel` canvas units at every level, so the window keeps the same drawn size.

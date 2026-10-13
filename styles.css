@@ -397,6 +397,8 @@ button, input, select { font: inherit; }
 .flow-key-red { color: #d14b45; }
 .flow-key-green { color: #27723b; }
 .flow-key-yellow { color: #a37600; }
+.flow-key-violet { color: #6a4fc9; }
+.flow-key-orange { color: #b85a00; }
 .flow-notice { margin-top: 12px; background: #fff8df; border-color: #efcc70; }
 .flow-status { margin-top: 10px; color: var(--muted); font-size: 10px; }
 .flow-formula { padding: 10px 12px; border-top: 1px solid var(--border); background: #f8faff; text-align: center; }
