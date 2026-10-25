@@ -22,9 +22,15 @@ The SIFT descriptor page (slides 16 and 24–28) shows where a keypoint's orient
 
 The ratio test page (slides 32–37) matches up to 500 of the strongest SIFT keypoints between a photograph and a second view made from it with a known homography and a lighting change, so every match is graded against its true location: it is correct when it lies within max(4 px, σ′/2) of that location and its scale is within 1.6× of the expected one. Moving the ratio threshold τ shows which matches are accepted or rejected, the TP/FP/FN/TN counts with precision, recall and specificity, the distribution of the ratio for correct and wrong nearest neighbours as on slide 33, and ROC curves for the ratio test and a plain distance threshold. An inspector shows the query f₁ beside its nearest (f₂) and second-nearest (f₂′) candidates. The UI is in `js/lecture8.js`.
 
+## Lecture 10 demo
+
+The **Stereo & depth** section follows "10. Depth Estimation & 3D Reconstruction", slides 27 and 28. It uses the lecture's own Middlebury 2014 Motorcycle pair at quarter size (741 × 500), as on slides 21, 25, 27 and 28, and the Middlebury 2005 Laundry scene (third size, seven equally spaced views) for five real baselines of 40–200 mm. For every pixel the page computes the SSD over a w × w window at every shift d (slide 25) and picks the lowest cost. Clicking a pixel draws its cost curve with the true disparity from Middlebury's ground truth and the chosen one, as on slide 27, and checks the four assumptions the slide lists. The case buttons jump to an example of each case: the slide's own pixels on the whiteboard, on the bench slats and behind the handlebar, and a pixel on the same headlight; at the slide's 9 × 9 window the whiteboard and handlebar pixels give the slide's chosen and true disparities, and the headlight pixel the slide's chosen 46 (true 58.4 against the slide's 58.5). The second section minimises slide 28's energy in the quadratic, confidence-weighted form described in the slide's notes, with uniform and edge-aware weights; with the slide's settings the page's re-implementation of the recipe in the slide's notes gives mean errors of 4.71, 3.77 and 3.41 px (the slide reports 4.7, 3.7 and 3.4; its exact image preprocessing is not documented). `js/stereo.js` holds the algorithms and `js/lecture10.js` the page. `scripts/verify_stereo.py` checks the JavaScript against an independent NumPy/SciPy implementation, and `scripts/build_stereo_assets.py` rebuilds `images/stereo/` from the Middlebury downloads.
+
 ## Bundled images
 
 The thumbnail picker reads `images/manifest.json`. To add or remove an image, place it in `images/` and update the JSON array.
+
+The stereo images in `images/stereo/` come from the [Middlebury stereo datasets](https://vision.middlebury.edu/stereo/data/): Motorcycle from D. Scharstein et al., "High-resolution stereo datasets with subpixel-accurate ground truth", GCPR 2014, and Laundry from D. Scharstein and C. Pal, "Learning conditional random fields for stereo", CVPR 2007, and H. Hirschmüller and D. Scharstein, "Evaluation of cost functions for stereo matching", CVPR 2007.
 
 ## Gabor filter-bank textures
 

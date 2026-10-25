@@ -849,9 +849,11 @@ export function createLecture8Experiments(root,{getSource,getSourceVersion}){
   const store=createStore(getSource,getSourceVersion),siftRuntime={token:0,invTimer:null},ratioRuntime={token:0,onResize:null};
   return[
     {group:'Descriptors & matching',id:'siftDescriptor',icon:'✳',title:'SIFT descriptor (L8)',description:'Follow one SIFT keypoint through the descriptor: normalize its neighbourhood, weight its gradients, pool them into 4 × 4 × 8 bins, and normalize the 128-D vector.',state:{...SIFT_STATE_DEFAULTS},
+      output:()=>root.querySelector('#l8SiftScene'),
       mount(){const token=++siftRuntime.token;mountSift(this,root,store,siftRuntime,token)},
       destroy(){siftRuntime.token++;clearTimeout(siftRuntime.invTimer)}},
     {group:'Descriptors & matching',id:'ratioTest',icon:'⇄',title:'Ratio test matching (L8)',description:'Match SIFT descriptors between two views and watch which matches the nearest-neighbour ratio test accepts or rejects as the threshold moves.',state:{...RATIO_DEFAULTS},
+      output:()=>root.querySelector('#l8RatioPair'),
       mount(){const token=++ratioRuntime.token;mountRatio(this,root,store,ratioRuntime,token)},
       destroy(){ratioRuntime.token++;if(ratioRuntime.onResize)window.removeEventListener('resize',ratioRuntime.onResize)}}
   ];
