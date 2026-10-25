@@ -1,6 +1,7 @@
 import {createLecture4Experiments} from './lecture4.js?v=18';
 import {createNmsExperiment,nmsGuide,NMS_PYTHON_SAMPLE} from './nms.js?v=5';
-import {createLecture8Experiments,siftGuide,ratioGuide,SIFT_PYTHON_SAMPLE,RATIO_PYTHON_SAMPLE} from './lecture8.js?v=5';
+import {createLecture8Experiments,siftGuide,ratioGuide,SIFT_PYTHON_SAMPLE,RATIO_PYTHON_SAMPLE} from './lecture8.js?v=6';
+import {createLecture10Experiments,stereoGuide,STEREO_PYTHON_SAMPLE} from './lecture10.js?v=7';
 
 (()=>{
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -100,7 +101,8 @@ createNmsExperiment(root),
   state:{extraMotion:24,pyramidLevels:4,trackedPoints:220,arrowScale:1,viewFrame:null,selectedFlowPoint:null},
   mount(){mountOpticalFlow(this)},
   destroy(){destroyOpticalFlow(this)}
-}
+},
+...createLecture10Experiments(root)
 ];
 
 const GABOR_TEXTURE_SIZE=144;
@@ -2403,6 +2405,8 @@ def adaptive_nms(gray, n=250, c=1.1):
 
   ratioTest:RATIO_PYTHON_SAMPLE,
 
+  stereoMatching:STEREO_PYTHON_SAMPLE,
+
   opticalFlow:`import cv2
 import numpy as np
 
@@ -2501,6 +2505,7 @@ function guideFor(id){
   if(id==='anms')return{overview:'Candidates are Harris corners (σ = 1.5, κ = 0.05) that are local maxima in a 3 × 3 neighborhood, with R above 0.01% of the maximum, at least 6 px from the border, capped at the strongest 4000. Strongest-N sorts them by response; adaptive NMS sorts them by suppression radius, the distance to the nearest candidate whose response exceeds c times their own.',params:[param('Keypoints kept',`N = ${s.budget}`,'The keypoint budget. Panels (a) and (c) keep N points; panels (b) and (d) keep 2N, as on the slide.'),param('Robustness factor',`c = ${s.robustness.toFixed(2)}`,'A neighbor suppresses a candidate only if its response exceeds c times the candidate’s. Brown et al. write the condition as f(xᵢ) < 0.9 f(xⱼ), which is c ≈ 1.1 here: only a clearly stronger neighbor counts. Larger c keeps more similar-strength neighbors side by side.'),param('Radius r','smallest kept radius','The caption of each ANMS panel reports the N-th largest suppression radius: every kept point is at least r away from any candidate more than c times stronger. It is not the spacing of the kept points: at c > 1 two kept points of similar strength can be closer than r, and at c = 1 r is a lower bound on the spacing between kept points of different strength.')],links:[link('Brown, Szeliski and Winder 2005 (MOPS)','https://www.microsoft.com/en-us/research/publication/multi-image-matching-using-multi-scale-oriented-patches/'),link('Szeliski: Computer Vision, 2nd ed.','https://szeliski.org/Book/'),link('Harris corner detector',WIKI.harris),link('Non-maximum suppression',WIKI.harrisNms)]};
   if(id==='siftDescriptor')return siftGuide(s);
   if(id==='ratioTest')return ratioGuide(s);
+  if(id==='stereoMatching')return stereoGuide(s);
   if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants, with the same 17 × 17 window, iteration budget and validity test (window residual plus a forward–backward check). Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',`${s.pyramidLevels} (L0–L${s.pyramidLevels-1})`,`Number of resolutions including the full-resolution image L0; each further level halves width and height (OpenCV maxLevel = ${s.pyramidLevels-1}). Tracking starts at the smallest level and refines the doubled displacement at each finer level. 1 level = single-scale LK. In the “Why the pyramid helps” diagram, levels run left → right in computation order; thumbnails and the window are drawn at true relative scale, and |d| comes from a fixed ${FLOW_REFERENCE_LEVELS}-level reference run so it does not change with this slider.`),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
   return null;
 }
@@ -2566,7 +2571,7 @@ function renderPseudocode(id){
 function activeExperiment(){return experiments.find(x=>x.id===state.active)}
 function mount(id){
   activeExperiment()?.destroy?.();
-  state.active=id;
+  state.active=id;state.output=null;
   const e=activeExperiment(),i=experiments.indexOf(e);
   $$('.nav-button').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
   $('#experimentIndex').textContent=String(i+1).padStart(2,'0');$('#experimentTitle').textContent=e.title;$('#experimentDescription').textContent=e.description;
@@ -2623,7 +2628,7 @@ async function setupGallery(){
   });
   document.addEventListener('keydown',event=>{if(event.key==='Escape')closeImagePicker()});
 }
-function bindGlobal(){$('#fileInput').onchange=e=>load(e.target.files[0]);$('#sampleButton').onclick=()=>{naturalPhotoApplied=true;sample()};$('#downloadButton').onclick=()=>{if(!state.output)return;const a=document.createElement('a');a.download=`cv-lab-${state.active}.png`;a.href=state.output.toDataURL('image/png');a.click()};['dragenter','dragover'].forEach(n=>document.addEventListener(n,e=>{e.preventDefault();$('#dropZone').classList.add('visible')}));document.addEventListener('dragleave',e=>{if(!e.relatedTarget)$('#dropZone').classList.remove('visible')});document.addEventListener('drop',e=>{e.preventDefault();$('#dropZone').classList.remove('visible');load(e.dataTransfer.files[0])})}
+function bindGlobal(){$('#fileInput').onchange=e=>load(e.target.files[0]);$('#sampleButton').onclick=()=>{naturalPhotoApplied=true;sample()};$('#downloadButton').onclick=()=>{const output=activeExperiment()?.output?.()||state.output;if(!output)return;const a=document.createElement('a');a.download=`cv-lab-${state.active}.png`;a.href=output.toDataURL('image/png');a.click()};['dragenter','dragover'].forEach(n=>document.addEventListener(n,e=>{e.preventDefault();$('#dropZone').classList.add('visible')}));document.addEventListener('dragleave',e=>{if(!e.relatedTarget)$('#dropZone').classList.remove('visible')});document.addEventListener('drop',e=>{e.preventDefault();$('#dropZone').classList.remove('visible');load(e.dataTransfer.files[0])})}
 
 const refreshParameterGuide=()=>queueMicrotask(()=>renderParameterGuide(state.active));
 root.addEventListener('input',refreshParameterGuide);
