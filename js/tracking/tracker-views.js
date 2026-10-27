@@ -26,7 +26,7 @@ function tag(ctx,text,x,y,color){
 }
 
 /**
- * Draws one tracker's view: the frame, the true box (simulation only), the search window,
+ * Draws one tracker's view: the frame, the ground-truth box (recorded clips only), the search window,
  * the recent trail and the current box. `scale` maps processing pixels to display pixels.
  */
 export function drawTrackerView(ctx,frameCanvas,{kind,result,trail,truth,drag,scale,skipped}){

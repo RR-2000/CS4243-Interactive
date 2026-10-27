@@ -1,8 +1,8 @@
 // Lecture 12 · Live MOSSE vs. fixed-template NCC tracker.
-// Webcam (or a scripted scene) → 320-px grayscale frame → both trackers → overlays, response maps, PSR timeline.
+// Webcam (or a recorded benchmark clip) → 320-px grayscale frame → both trackers → overlays, response maps, PSR timeline.
 
 import {MosseTracker,NccTracker,grayFrame,GRID,TEMPLATE_GRID} from './trackers.js';
-import {createScene,SCENE_W,SCENE_H,SCENE_FPS} from './synthetic-scene.js';
+import {CLIPS,CLIP_FPS,clipBox,openClip,closeClip,seekFrame} from './clips.js';
 import {boxIoU} from './shared.js';
 import {TRACK_COLORS,PSR_AXIS_MAX,drawTrackerView,drawPlaceholder,drawGray,drawHeat,cropCenter,drawTimeline} from './tracker-views.js';
 
@@ -11,26 +11,26 @@ const DISPLAY_WIDTH=640;
 const HISTORY=240;      // 8 s of PSR history at 30 fps
 const TRAIL=40;
 const MIN_BOX=12;       // minimum box side in processing pixels
-const LOST_IOU=.3;      // simulation: IoU with the true box below this counts as "lost"
-const FRAME_MS=1000/SCENE_FPS;
+const LOST_IOU=.3;      // recorded clips: IoU with the ground-truth box below this counts as "lost"
+const FRAME_MS=1000/CLIP_FPS;
 const KINDS=['ncc','mosse'];
 const ID={ncc:'Ncc',mosse:'Mosse'};
 const ETA_PRESETS=[[.02,'0.02 · stable, goes stale'],[.125,'0.125 · paper default'],[.4,'0.4 · adapts fast, drifts']];
 
-const SCENE_NOTES={
-  turn:'<b>Head turn.</b> The person turns to profile and walks along a bookshelf (with a framed photo of themself on it). The <b class="k-ncc">NCC</b> template is frozen at the frontal face: it no longer matches the profile, so its box is left behind among the books. <b class="k-mosse">MOSSE</b> has re-trained on the profile and walks with the person.',
-  occlusion:'<b>Hand occlusion.</b> A hand covers the face for 2 s, then is pulled away. Watch MOSSE’s <i>appearance memory</i> turn into a hand — then replay with the confidence check switched on.',
-  crossing:'<b>Walk past a colleague.</b> A second person crosses in front of the target. Watch where both boxes go, and what PSR does while the faces overlap.'
+const CLIP_NOTES={
+  turn:'<b>Head turn · real footage.</b> In this benchmark clip (“Dudek”) a man turns his head, smiles and moves around his office. The <b class="k-ncc">NCC</b> template is frozen at the first frame, so it slides off his face as his appearance changes. <b class="k-mosse">MOSSE</b> re-trains every frame and stays on it.',
+  occlusion:'<b>Occlusion · real footage.</b> In “Woman” a pedestrian walks behind a row of parked cars that hide most of her body. With the confidence check off, MOSSE trains on the cars and drifts ahead of her — watch its appearance memory. Then replay with the check on.',
+  crossing:'<b>Walk past · real footage.</b> In “Walking2” a man walks past the woman being tracked. Watch which box he takes with him, and what PSR does while they overlap.'
 };
-const SCENE_FOLLOW_UP={
-  turn:s=>s.eta<.05?'With η this small MOSSE still mostly remembers the frontal face: it goes stale and is caught by the photo of that face. Set η back to 0.125 and replay.':'Now set η = 0.02 and replay: a slowly learning MOSSE goes stale too.',
-  occlusion:s=>s.gate?'With the confidence check on, MOSSE refused to learn the hand and waited for the face.':'Now tick <b>Skip the MOSSE update when the peak is weak</b> and replay.',
-  crossing:()=>'A face is still a face: PSR stays high, so the confidence check cannot tell the two people apart. Keeping identities needs motion and data association.'
+const CLIP_FOLLOW_UP={
+  turn:()=>'Notice the PSR: NCC’s peak stays flat while MOSSE’s is sharp. On this clip a small or large η makes little difference — what matters is updating at all.',
+  occlusion:s=>s.gate?'With the confidence check on, MOSSE skipped the weak frames (red in the timeline) instead of learning the cars, and stayed with her.':'Now tick <b>Skip the MOSSE update when the peak is weak</b> and replay.',
+  crossing:s=>s.eta<.06?'With η this small MOSSE barely learns the passer-by and stays with her — as stable as the fixed template. The price: it also adapts slowly when the target itself changes.':'MOSSE re-trained on the man while he overlapped her, so it left with him; the frozen NCC template still matched the woman. The PSR check does not help — his peak is sharp too. Now set η = 0.02 and replay.'
 };
 const TRY_CARDS=[
-  {scenario:'turn',title:'1 · Turn your head',act:'Box your face. Turn your head to the side and, while turned, lean or step sideways about a head-width — then turn back. (Turning on the spot is often not enough: NCC can still cling to the head outline.)',watch:'Even before it fails, <b class="k-ncc">NCC</b>’s peak is flat (PSR ≈ 3) while <b class="k-mosse">MOSSE</b>’s stays sharp. When you move while turned, NCC slides off — its frozen frontal template no longer matches — and MOSSE, re-training every frame, moves with you.',then:'Then set η = 0.02: MOSSE now learns too slowly and goes stale as well (in the simulation it is caught by a photo of the frontal face).',slide:'Incremental Update · Small η vs. large η'},
-  {scenario:'occlusion',title:'2 · Cover it with your hand',act:'Hold a hand over your face for about 2 s — keep your head still — then slide the hand away.',watch:'Gate off: MOSSE’s memory turns into a hand and the box leaves with it — <b>drift</b>. Gate on: PSR drops under the red line, updates are skipped, and the face is re-acquired.',then:'NCC never learns the hand either — but with nothing to match while the face is hidden, its peak wanders off. Gate caveat: a held box does not move, so if you walk away while covered it is left behind — real trackers add re-detection.',slide:'Tracking Issues · Confidence and recovery'},
-  {scenario:'crossing',title:'3 · Walk past a colleague',act:'Track a face while someone walks in front of it.',watch:'Both boxes usually jump to the other person. Faces look alike, so PSR stays high — the confidence check cannot help.',then:'This is the crossing failure from the results video.',slide:'Next: data association',go:true}
+  {scenario:'turn',title:'1 · Turn your head',act:'Box your face. Turn your head to the side and, while turned, lean or step sideways about a head-width — then turn back.',watch:'<b class="k-ncc">NCC</b>’s peak goes flat (PSR ≈ 3) and its box slides off: the frozen template no longer matches. <b class="k-mosse">MOSSE</b> re-trains every frame and moves with you.',then:'Also try η = 0.02 on the webcam: MOSSE learns too slowly and goes stale. The recorded clip shows the same NCC failure on real footage.',slide:'Incremental Update · Template Matching vs. MOSSE'},
+  {scenario:'occlusion',title:'2 · Cover it with your hand',act:'Hold a hand over your face for about 2 s — keep your head still — then slide the hand away.',watch:'Gate off: MOSSE’s memory turns into a hand and the box leaves with it — <b>drift</b>. Gate on: PSR drops under the red line, updates are skipped, and the face is re-acquired.',then:'The recorded clip shows the same failure and fix with parked cars as the occluder. Gate caveat: a held box does not move, so a target that walks away while covered is left behind — real trackers add re-detection.',slide:'Tracking Issues · Confidence and recovery'},
+  {scenario:'crossing',title:'3 · Walk past a colleague',act:'Track a face while someone walks in front of it.',watch:'The adaptive MOSSE box is pulled away by the other person. PSR stays high — a face is still a face — so the confidence check cannot help.',then:'This is the crossing failure from the results video. On the recorded clip, also try η = 0.02: a slowly learning MOSSE resists the passer-by.',slide:'Next: data association',go:true}
 ];
 
 export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindSegment,heatColor,app,navigate,refreshGuide}){
@@ -53,10 +53,10 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
 
   function layout(s){
     const presets=ETA_PRESETS.map(([v,label])=>`<button type="button" data-eta="${v}">${label}</button>`).join('');
-    const cards=TRY_CARDS.map(c=>`<article class="track-try-card"><h3>${c.title}</h3><p><b>Do:</b> ${c.act}</p><p><b>Watch:</b> ${c.watch}</p><p class="track-then">${c.then}</p><div class="track-try-foot"><small>${c.slide}</small><span><button class="button ghost" type="button" data-try="${c.scenario}">Simulate</button>${c.go?'<button class="button" type="button" data-go="dataAssociation">Association exercise →</button>':''}</span></div></article>`).join('');
+    const cards=TRY_CARDS.map(c=>`<article class="track-try-card"><h3>${c.title}</h3><p><b>Do:</b> ${c.act}</p><p><b>Watch:</b> ${c.watch}</p><p class="track-then">${c.then}</p><div class="track-try-foot"><small>${c.slide}</small><span><button class="button ghost" type="button" data-try="${c.scenario}">Play clip</button>${c.go?'<button class="button" type="button" data-go="dataAssociation">Association exercise →</button>':''}</span></div></article>`).join('');
     return `<div class="controls track-controls">
-        <div class="control narrow"><span class="control-label">Video source</span>${segment('trackSource',[['webcam','Webcam'],['sim','Simulated scene']],s.source)}</div>
-        <div class="control" id="trackScenarioControl"><span class="control-label">Scene</span>${segment('trackScenario',[['turn','Head turn'],['occlusion','Hand occlusion'],['crossing','Walk past']],s.scenario)}</div>
+        <div class="control narrow"><span class="control-label">Video source</span>${segment('trackSource',[['webcam','Webcam'],['clip','Recorded clips']],s.source)}</div>
+        <div class="control" id="trackScenarioControl"><span class="control-label">Clip</span>${segment('trackScenario',[['turn','Head turn · Dudek'],['occlusion','Occlusion · Woman'],['crossing','Walk past · Walking2']],s.scenario)}</div>
         <div class="track-buttons"><button class="button" id="trackPrimary" type="button">Start camera</button><button class="button ghost" id="trackPause" type="button">Pause</button><button class="button ghost" id="trackReset" type="button">Redraw box</button><button class="button ghost" id="trackFlip" type="button">Switch camera</button></div>
       </div>
       <div class="controls track-controls">
@@ -70,7 +70,7 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
       <h2 class="track-heading">Try this in class</h2>
       <div class="track-try">${cards}</div>
       <div class="note flow-takeaway"><b>Classroom takeaway:</b> a <b>fixed template</b> never drifts but goes stale when the target changes appearance. <b>MOSSE</b> adapts through η, but it learns whatever is inside the box — including a hand. <b>PSR</b> tells it when <i>not</i> to learn. None of them can keep an identity when a similar object crosses: that needs motion and data association.</div>
-      <div class="flow-source-note">Your camera video is processed only inside this browser tab; nothing is uploaded. MOSSE follows Bolme et al., “Visual Object Tracking using Adaptive Correlation Filters”, CVPR 2010 (learning rate η = 0.125, PSR ≈ 7 for failure). Both trackers look only inside the same window (2 × the box) around their last position, at one fixed scale; the NCC template must fit inside it, so NCC can move at most half a box per frame.</div>`;
+      <div class="flow-source-note">Your camera video is processed only inside this browser tab; nothing is uploaded. MOSSE follows Bolme et al., “Visual Object Tracking using Adaptive Correlation Filters”, CVPR 2010 (learning rate η = 0.125, PSR ≈ 7 for failure). Both trackers look only inside the same window (2 × the box) around their last position, at one fixed scale; the NCC template must fit inside it, so NCC can move at most half a box per frame. Recorded clips: sequences Dudek, Woman and Walking2 with their ground-truth boxes, from the OTB-100 tracking benchmark (Y. Wu, J. Lim, M.-H. Yang, “Object Tracking Benchmark”, TPAMI 2015).</div>`;
   }
 
   function setInstruction(html,isError=false){
@@ -81,9 +81,9 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
   function setPaused(paused){rt.paused=paused;const button=$('#trackPause');if(button)button.textContent=paused?'Resume':'Pause'}
 
   function syncSourceUi(){
-    const s=rt.experiment.state,sim=s.source==='sim';
-    $('#trackScenarioControl').hidden=!sim;$('#trackFlip').hidden=sim;
-    $('#trackPrimary').textContent=sim?'Replay scene':rt.stream?'Restart camera':'Start camera';
+    const s=rt.experiment.state,clip=s.source==='clip';
+    $('#trackScenarioControl').hidden=!clip;$('#trackFlip').hidden=clip;
+    $('#trackPrimary').textContent=clip?'Replay clip':rt.stream?'Restart camera':'Start camera';
   }
 
   function bindControls(s){
@@ -96,14 +96,14 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
       const button=event.target.closest('button');if(!button)return;
       s.eta=+button.dataset.eta;$('#trackEta').value=s.eta;$('#trackEtaOut').textContent=s.eta.toFixed(3);refreshGuide();
     });
-    $('#trackPrimary').addEventListener('click',()=>s.source==='sim'?startScene():startCamera());
+    $('#trackPrimary').addEventListener('click',()=>s.source==='clip'?startClip():startCamera());
     $('#trackPause').addEventListener('click',()=>setPaused(!rt.paused));
     $('#trackReset').addEventListener('click',requestNewBox);
     $('#trackFlip').addEventListener('click',()=>{s.facing=s.facing==='user'?'environment':'user';startCamera()});
     $('.track-try').addEventListener('click',event=>{
       const button=event.target.closest('button');if(!button)return;
       if(button.dataset.go){navigate(button.dataset.go);return}
-      s.source='sim';s.scenario=button.dataset.try;setSegment('trackSource','sim');setSegment('trackScenario',s.scenario);setSource();
+      s.source='clip';s.scenario=button.dataset.try;setSegment('trackSource','clip');setSegment('trackScenario',s.scenario);setSource();
       $('.track-grid').scrollIntoView({behavior:'smooth',block:'start'});
     });
     KINDS.forEach(kind=>bindDrawing(rt.views[kind]));
@@ -137,9 +137,9 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
     view.addEventListener('pointercancel',()=>{rt.drag=null;redraw()});
   }
   function requestNewBox(){
-    if(rt.scene&&rt.finished){startScene();setInstruction('Replaying the scene. Pause at any moment and press <b>Redraw box</b> to draw your own box on that frame.');return}
+    if(rt.clip&&rt.finished){startClip().then(()=>setInstruction('Replaying the clip. Pause at any moment and press <b>Redraw box</b> to draw your own box on that frame.'));return}
     clearTrackers();
-    if(rt.scene){rt.awaitBox=true;setPaused(true);setInstruction('Paused. Drag a new box on either video — playback resumes when you release.')}
+    if(rt.clip){rt.awaitBox=true;setPaused(true);setInstruction('Paused. Drag a new box on either video — playback resumes when you release.')}
     else setInstruction('Drag a new box around your face or an object. Both trackers restart from the same box.');
   }
 
@@ -157,7 +157,7 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
     rt.token=++generation;
     cancelAnimationFrame(rt.raf);rt.raf=0;rt.drag=null;setPaused(false);
     rt.stream?.getTracks().forEach(track=>track.stop());rt.stream=null;
-    rt.video?.remove();rt.video=null;rt.scene=null;rt.sourceReady=false;rt.finished=false;rt.awaitBox=false;rt.truth=null;
+    rt.video?.remove();rt.video=null;closeClip(rt.clipVideo);rt.clipVideo=null;rt.clip=null;rt.seeking=false;rt.sourceReady=false;rt.finished=false;rt.awaitBox=false;rt.truth=null;
     clearTrackers();
   }
 
@@ -165,30 +165,30 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
     stopSource();
     syncSourceUi();
     refreshGuide();
-    if(rt.experiment.state.source==='sim')startScene();
+    if(rt.experiment.state.source==='clip')startClip();
     else showCameraPrompt();
   }
 
   function showCameraPrompt(){
     configureSize(640,480);
     KINDS.forEach(kind=>drawPlaceholder(rt.views[kind].getContext('2d'),['Webcam is off','Press “Start camera”, then drag a box around your face']));
-    setInstruction('Press <b>Start camera</b>. Then drag a box around your face (or any object) in either video — both trackers start from that box. No camera? Choose <b>Simulated scene</b>.');
+    setInstruction('Press <b>Start camera</b>. Then drag a box around your face (or any object) in either video — both trackers start from that box. No camera? Choose <b>Recorded clips</b>.');
     $('#trackStatus').textContent='';
   }
 
   function cameraErrorMessage(error){
-    if(error?.name==='NotAllowedError')return'Camera permission was denied. Allow camera access in the browser’s address bar and press Start camera again — or use the simulated scene.';
-    if(error?.name==='NotFoundError'||error?.name==='OverconstrainedError')return'No camera was found on this device. Use the simulated scene instead.';
+    if(error?.name==='NotAllowedError')return'Camera permission was denied. Allow camera access in the browser’s address bar and press Start camera again — or use the recorded clips.';
+    if(error?.name==='NotFoundError'||error?.name==='OverconstrainedError')return'No camera was found on this device. Use the recorded clips instead.';
     if(error?.name==='NotReadableError')return'The camera is busy in another app (Zoom, Teams…). Close it and press Start camera again.';
     const detail=String(error?.message||'unknown error').replace(/[&<>"']/g,c=>`&#${c.charCodeAt(0)};`);
-    return`Could not start the camera (${detail}). Use the simulated scene instead.`;
+    return`Could not start the camera (${detail}). Use the recorded clips instead.`;
   }
 
   async function startCamera(){
     stopSource();showCameraPrompt();
     const token=rt.token,s=rt.experiment.state;
     if(!navigator.mediaDevices?.getUserMedia){
-      setInstruction('This page cannot open a camera here: browsers only allow it on HTTPS or localhost. Use the simulated scene instead.',true);return;
+      setInstruction('This page cannot open a camera here: browsers only allow it on HTTPS or localhost. Use the recorded clips instead.',true);return;
     }
     setInstruction('Waiting for camera permission…');
     let stream;
@@ -230,31 +230,42 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
     rt.raf=requestAnimationFrame(tick);
   }
 
-  function startScene(){
+  async function startClip(){
     stopSource();syncSourceUi();
-    const s=rt.experiment.state,token=rt.token;
-    rt.scene=createScene(s.scenario);rt.mirror=false;
-    rt.sceneCanvas=document.createElement('canvas');rt.sceneCanvas.width=SCENE_W;rt.sceneCanvas.height=SCENE_H;
-    rt.sceneCtx=rt.sceneCanvas.getContext('2d',{willReadFrequently:true});
-    configureSize(SCENE_W,SCENE_H);
-    rt.sourceReady=true;rt.frame=0;rt.lastTick=0;setPaused(false);
-    setInstruction(SCENE_NOTES[s.scenario]+' <span class="track-legend-truth">White dashed box = true target.</span>');
+    const s=rt.experiment.state,token=rt.token,clip=CLIPS[s.scenario];
+    rt.clip=clip;rt.mirror=false;rt.frame=0;
+    configureSize(clip.width,clip.height);
+    KINDS.forEach(kind=>drawPlaceholder(rt.views[kind].getContext('2d'),['Loading clip…',`“${clip.sequence}” · OTB tracking benchmark`]));
+    setInstruction('Loading the recorded clip…');
+    let video;
+    try{video=await openClip(clip)}catch(error){
+      if(rt?.token===token)setInstruction(`${String(error.message).replace(/[&<>"']/g,c=>`&#${c.charCodeAt(0)};`)}. Check the connection and press <b>Replay clip</b>.`,true);
+      return;
+    }
+    if(rt?.token!==token){closeClip(video);return}
+    rt.clipVideo=video;rt.sourceReady=true;rt.lastTick=0;setPaused(false);
+    setInstruction(CLIP_NOTES[s.scenario]+' <span class="track-legend-truth">White dashed box = the benchmark’s ground truth.</span>');
     const loop=now=>{
-      if(rt?.token!==token||!rt.scene)return;
-      if(!rt.paused&&!rt.finished&&now-rt.lastTick>=FRAME_MS-1){rt.lastTick=now;advanceScene()}
+      if(rt?.token!==token)return;
+      if(!rt.paused&&!rt.finished&&!rt.seeking&&now-rt.lastTick>=FRAME_MS-1){rt.lastTick=now;advanceClip(token)}
       rt.raf=requestAnimationFrame(loop);
     };
     rt.raf=requestAnimationFrame(loop);
   }
 
-  function advanceScene(){
-    const truth=rt.scene.render(rt.sceneCtx,rt.frame),k=rt.procW/SCENE_W;
-    rt.truth={cx:truth.cx*k,cy:truth.cy*k,w:truth.w*k,h:truth.h*k};
-    processFrame(rt.sceneCanvas);
+  // Frames are fetched by seeking, so every replay feeds the trackers the same frames.
+  async function advanceClip(token){
+    rt.seeking=true;
+    await seekFrame(rt.clipVideo,rt.frame);
+    if(rt?.token!==token)return;
+    rt.seeking=false;
+    const box=clipBox(rt.clip,rt.frame),k=rt.procW/rt.clip.width;
+    rt.truth={cx:box.cx*k,cy:box.cy*k,w:box.w*k,h:box.h*k};
+    processFrame(rt.clipVideo);
     if(!rt.trackers&&!rt.awaitBox)initTrackers(rt.truth);
     rt.frame++;
-    $('#trackStatus').textContent=`Simulated scene · t = ${(rt.frame/SCENE_FPS).toFixed(1)} s of ${(rt.scene.frames/SCENE_FPS).toFixed(1)} s${timingText()}`;
-    if(rt.frame>=rt.scene.frames){rt.finished=true;showSummary()}
+    $('#trackStatus').textContent=`Recorded clip “${rt.clip.sequence}” (OTB) · t = ${(rt.frame/CLIP_FPS).toFixed(1)} s of ${(rt.clip.frames/CLIP_FPS).toFixed(1)} s${timingText()}`;
+    if(rt.frame>=rt.clip.frames){rt.finished=true;showSummary()}
   }
 
   function showSummary(){
@@ -262,11 +273,11 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
     const describe=kind=>{
       const lost=rt.lost[kind];
       if(!rt.trackers)return'was not running';
-      if(!lost.frames)return'stayed on the target for the whole scene ✓';
-      if(lost.now)return`lost the target at ${(lost.since/SCENE_FPS).toFixed(1)} s ✗`;
-      return`lost it for ${(lost.frames/SCENE_FPS).toFixed(1)} s, then found it again`;
+      if(!lost.frames)return'stayed on the target for the whole clip ✓';
+      if(lost.now)return`lost the target at ${(lost.since/CLIP_FPS).toFixed(1)} s ✗`;
+      return`lost it for ${(lost.frames/CLIP_FPS).toFixed(1)} s, then found it again`;
     };
-    setInstruction(`<b>Scene finished.</b> <b class="k-ncc">NCC</b> ${describe('ncc')}. <b class="k-mosse">MOSSE</b> ${describe('mosse')}. ${SCENE_FOLLOW_UP[s.scenario](s)}`);
+    setInstruction(`<b>Clip finished.</b> <b class="k-ncc">NCC</b> ${describe('ncc')}. <b class="k-mosse">MOSSE</b> ${describe('mosse')}. ${CLIP_FOLLOW_UP[s.scenario](s)}`);
   }
 
   // ----- per-frame processing -----
@@ -282,7 +293,7 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
     drawSource(rt.procCtx,source,rt.procW,rt.procH);
     rt.gray=grayFrame(rt.procCtx.getImageData(0,0,rt.procW,rt.procH).data,rt.procW,rt.procH);
     if(rt.trackers)step();
-    else if(!rt.scene)$('#trackStatus').textContent=`Camera ${rt.video.videoWidth} × ${rt.video.videoHeight} · trackers run on a ${rt.procW} × ${rt.procH} grayscale frame`;
+    else if(!rt.clip)$('#trackStatus').textContent=`Camera ${rt.video.videoWidth} × ${rt.video.videoHeight} · trackers run on a ${rt.procW} × ${rt.procH} grayscale frame`;
     redraw();
     app.output=rt.views.mosse;
   }
@@ -304,7 +315,7 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
     rt.history.push({ncc:nccResult.psr,mosse:mosseResult.psr,skipped:mosseResult.skipped});
     if(rt.history.length>HISTORY)rt.history.shift();
     if(rt.truth)scoreAgainstTruth();
-    if(!rt.scene)$('#trackStatus').textContent=`Camera · ${rt.fps.toFixed(0)} fps · trackers run on ${rt.procW} × ${rt.procH} grayscale${timingText()}`;
+    if(!rt.clip)$('#trackStatus').textContent=`Camera · ${rt.fps.toFixed(0)} fps · trackers run on ${rt.procW} × ${rt.procH} grayscale${timingText()}`;
     updateInspectors();updateReadouts();drawChart();
   }
 
@@ -330,7 +341,7 @@ export function createTrackerLab({root,$,$$,controlRange,bindRange,segment,bindS
     rt.trails={ncc:[],mosse:[]};rt.history=[];rt.lost=freshLost();rt.timing={ncc:0,mosse:0};
     drawGray(ctx2d('trackModelNcc'),ncc.templateImage(),TEMPLATE_GRID);
     updateInspectors();updateReadouts();drawChart();redraw();
-    if(!rt.scene)setInstruction('Tracking. Now try the experiments below: <b>turn your head</b>, <b>cover your face with a hand</b>, or <b>walk past someone</b>.');
+    if(!rt.clip)setInstruction('Tracking. Now try the experiments below: <b>turn your head</b>, <b>cover your face with a hand</b>, or <b>walk past someone</b>.');
   }
 
   function clearTrackers(){

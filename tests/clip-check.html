@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tracking clip check</title>
+  <style>
+    body { margin: 24px; font: 13px Arial, Helvetica, sans-serif; color: #181818; background: #f7f7f7; }
+    table { border-collapse: collapse; background: #fff; }
+    th, td { padding: 6px 10px; border: 1px solid #ddd; text-align: left; }
+    .pass { color: #27723b; font-weight: 700; }
+    .fail { color: #c62828; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>Tracking clip check</h1>
+  <p>Replays the three recorded OTB clips of the MOSSE vs. NCC lab frame by frame, exactly as the page does, and checks that the default settings still show what the lecture claims. Serve the repository root (for example <code>python3 -m http.server</code>) and open <code>/tests/clip-check.html</code>.</p>
+  <p id="summary">Running…</p>
+  <table><thead><tr><th>Clip</th><th>Settings</th><th>Expectation</th><th>NCC</th><th>MOSSE</th><th>Result</th></tr></thead><tbody id="rows"></tbody></table>
+  <script type="module">
+    import {CLIPS,clipBox,openClip,seekFrame} from '../js/tracking/clips.js';
+    import {MosseTracker,NccTracker,grayFrame} from '../js/tracking/trackers.js';
+    import {boxIoU} from '../js/tracking/shared.js';
+
+    const LOST_IOU=.3,PROC_WIDTH=320;
+    const CASES=[
+      {clip:'turn',settings:{},expect:'appearance change: NCC loses the face, MOSSE keeps it',check:r=>r.ncc.lostAtEnd&&!r.mosse.lostAtEnd&&r.mosse.share>=.85},
+      {clip:'occlusion',settings:{},expect:'MOSSE learns the parked cars and drifts away',check:r=>r.mosse.lostAtEnd},
+      {clip:'occlusion',settings:{gate:true},expect:'with the PSR gate MOSSE stays with her',check:r=>!r.mosse.lostAtEnd&&r.skipped>0},
+      {clip:'crossing',settings:{},expect:'MOSSE is pulled away by the passer-by; the fixed NCC template is not',check:r=>r.mosse.lostAtEnd&&!r.ncc.lostAtEnd},
+      {clip:'crossing',settings:{gate:true},expect:'the PSR gate does not help: the passer-by gives a sharp peak',check:r=>r.mosse.lostAtEnd},
+      {clip:'crossing',settings:{eta:.02},expect:'a slowly learning MOSSE (η = 0.02) stays with her',check:r=>!r.mosse.lostAtEnd}
+    ];
+
+    async function run({clip:key,settings}){
+      const clip=CLIPS[key],video=await openClip(clip),k=PROC_WIDTH/clip.width,canvas=document.createElement('canvas');
+      canvas.width=PROC_WIDTH;canvas.height=Math.round(clip.height*k);
+      const ctx=canvas.getContext('2d',{willReadFrequently:true});
+      const ncc=new NccTracker(),mosse=new MosseTracker({eta:settings.eta??.125}),stats={ncc:{onTarget:0,iou:1},mosse:{onTarget:0,iou:1}};
+      let skipped=0;
+      for(let frame=0;frame<clip.frames;frame++){
+        await seekFrame(video,frame);
+        ctx.drawImage(video,0,0,canvas.width,canvas.height);
+        const gray=grayFrame(ctx.getImageData(0,0,canvas.width,canvas.height).data,canvas.width,canvas.height),b=clipBox(clip,frame);
+        const truth={cx:b.cx*k,cy:b.cy*k,w:b.w*k,h:b.h*k};
+        if(!frame){ncc.init(gray,truth);mosse.init(gray,truth);continue}
+        const results={ncc:ncc.track(gray),mosse:mosse.track(gray,{gate:!!settings.gate,threshold:7})};
+        if(results.mosse.skipped)skipped++;
+        for(const kind of['ncc','mosse']){stats[kind].iou=boxIoU(results[kind].box,truth);if(stats[kind].iou>=LOST_IOU)stats[kind].onTarget++}
+      }
+      for(const kind of['ncc','mosse']){stats[kind].lostAtEnd=stats[kind].iou<LOST_IOU;stats[kind].share=stats[kind].onTarget/(clip.frames-1)}
+      return{...stats,skipped};
+    }
+
+    const describe=s=>`${s.lostAtEnd?'lost':'on target'} at the end (IoU ${s.iou.toFixed(2)}) · on target ${Math.round(100*s.share)}% of frames`;
+    let passed=0;
+    for(const testCase of CASES){
+      const result=await run(testCase),ok=testCase.check(result);
+      if(ok)passed++;
+      const row=document.createElement('tr');
+      [`${testCase.clip} · ${CLIPS[testCase.clip].sequence}`,JSON.stringify(testCase.settings),testCase.expect,describe(result.ncc),describe(result.mosse)+(result.skipped?` · ${result.skipped} updates skipped`:'')].forEach(text=>{const cell=document.createElement('td');cell.textContent=text;row.append(cell)});
+      const verdict=document.createElement('td');verdict.className=ok?'pass':'fail';verdict.textContent=ok?'PASS':'FAIL';row.append(verdict);
+      document.querySelector('#rows').append(row);
+    }
+    const summary=document.querySelector('#summary');
+    summary.textContent=`${passed} / ${CASES.length} checks passed`;summary.className=passed===CASES.length?'pass':'fail';
+    document.body.dataset.done=String(passed===CASES.length);
+  </script>
+</body>
+</html>
