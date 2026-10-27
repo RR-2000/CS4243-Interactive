@@ -1,5 +1,5 @@
 import {createTrackerLab} from './tracking/tracker-lab.js?v=3';
-import {createAssociationLab} from './tracking/association-lab.js?v=3';
+import {createAssociationLab} from './tracking/association-lab.js?v=4';
 import {DEFAULT_ETA,DEFAULT_PSR_THRESHOLD} from './tracking/trackers.js';
 import {createLecture4Experiments} from './lecture4.js?v=18';
 import {createNmsExperiment,nmsGuide,NMS_PYTHON_SAMPLE} from './nms.js?v=5';

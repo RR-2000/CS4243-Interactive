@@ -46,7 +46,7 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
           <div class="assoc-actions"><button class="button" type="button" id="assocCheck">Check my answer</button><button class="button ghost" type="button" id="assocSolve">Show Hungarian answer</button><button class="button ghost" type="button" id="assocReset">Reset</button><button class="button ghost" type="button" id="assocNext">Next round →</button></div>
           <div class="note assoc-feedback" id="assocFeedback" role="status" aria-live="polite"></div>
         </div>
-        <figure class="card"><figcaption><span>How a tracker decides · cost = 1 − IoU</span><small>— gated (IoU &lt; 0.2)</small></figcaption><div class="assoc-matrix" id="assocMatrix"></div><div class="assoc-explain" id="assocExplain">Hover a cell: frame ② highlights the two boxes it compares.</div><div class="assoc-total" id="assocTotal"></div></figure>
+        <figure class="card"><figcaption><span>How a tracker decides · cost = 1 − IoU · <b>lower is better</b></span><small>— gated (IoU &lt; 0.2)</small></figcaption><div class="assoc-matrix-help">Each cell is a <b>cost</b>, not a score: 0 means the boxes overlap perfectly, 1 means they do not overlap. The tracker picks the one-to-one matching with the smallest <b>total</b> cost.</div><div class="assoc-matrix" id="assocMatrix"></div><div class="assoc-explain" id="assocExplain">Hover a cell: frame ② highlights the two boxes it compares.</div><div class="assoc-total" id="assocTotal"></div></figure>
       </div>
       <div class="note flow-takeaway"><b>Classroom takeaway:</b> association is a <b>one-to-one matching</b> on a cost matrix. Gating removes impossible pairs, a track without a detection is kept as <i>missing</i>, a detection without a track starts a <i>new track</i>, and the Hungarian algorithm picks the matching with the lowest <b>total</b> cost. The answer is only as good as the cost: with a motion model (SORT) or appearance features (DeepSORT), people who cross keep their identities.</div>
       <div class="flow-source-note">Frames: PETS 2009 S2L1 (J. Ferryman and A. Shahrokni, PETS 2009 workshop), the sequence on the lecture slides, via MOTChallenge MOT15 (L. Leal-Taixé et al., 2015), licensed CC BY-NC-SA 3.0. Coloured tracks: MOT15 ground truth; white boxes: MOT15 public detections (score ≥ 20). The two frames are ${r.gap} video frames apart (7 fps).</div>`;
@@ -101,7 +101,7 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
       return `<td class="${gated?'gated':''}${chosen?' chosen':''}${optimal?' optimal':''}" style="--chip:${track.color}"${pair}>${content}</td>`;
     };
     const header=`<tr><th>Track \\ detection</th>${r.detections.map(d=>`<th>${d.id}</th>`).join('')}<th>missing</th></tr>`;
-    const rows=r.tracks.map((track,i)=>`<tr><th><span class="assoc-dot" style="--chip:${track.color}"></span>${track.id}</th>${r.detections.map((d,j)=>cell(track,d.id,m[i][j].gated?'—':fmt(m[i][j].cost),m[i][j].gated)).join('')}${cell(track,MISSING,fmt(MISS_COST),false)}</tr>`).join('');
+    const rows=r.tracks.map((track,i)=>`<tr><th><span class="assoc-dot" style="--chip:${track.color}"></span>${track.id}</th>${r.detections.map((d,j)=>cell(track,d.id,m[i][j].gated?'—':`${fmt(m[i][j].cost)}<small>IoU ${fmt(1-m[i][j].cost)}</small>`,m[i][j].gated)).join('')}${cell(track,MISSING,fmt(MISS_COST),false)}</tr>`).join('');
     $('#assocMatrix').innerHTML=`<table><thead>${header}</thead><tbody>${rows}</tbody></table>${best?'<small class="assoc-matrix-note">Outlined cells = minimum-cost (Hungarian) assignment.</small>':''}`;
     const placed=r.tracks.filter(t=>s.assignment[t.id]);
     if(!placed.length){$('#assocTotal').textContent='Your total cost: —';return}
@@ -151,7 +151,12 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
     const best=optimalAssignment(r,m),truth=trueAssignment(r),parts=[];
     if(sameAssignment(r,best.assignment,truth))parts.push(`The minimum-cost (Hungarian) assignment agrees: ${describe(r,best.assignment)}, total ${fmt(best.total)}.`);
     else parts.push(`With ${CUE_LABEL[cue]} costs the minimum-cost assignment is <b>${describe(r,best.assignment)}</b> (total ${fmt(best.total)}) — an <b>ID switch</b>. ${cue==='last'?'Without a motion model the correct pairs are even gated (—): the tracker cannot consider them. Switch “Cost is measured from” to <b>Predicted box</b> and look at the matrix again.':''}`);
-    if(r.id==='warmup')parts.push('Look at the d2 column: B and C both want d2, but one box can continue only one track. B is cheaper, so C becomes “missing”.');
+    if(r.id==='warmup'){
+      // B and the hidden C compete for the same box: compare the two complete matchings.
+      const truth=trueAssignment(r),contested=truth.B,alternative={...truth,B:MISSING,C:contested};
+      const totalTruth=assignmentCost(r,m,truth),totalAlternative=assignmentCost(r,m,alternative);
+      if(totalTruth!=null&&totalAlternative!=null)parts.push(`Look at the ${contested} column: B and C both overlap ${contested}, but one box can continue only one track, so the other one becomes “missing” (cost ${fmt(MISS_COST)}). Compare the two complete matchings: B → ${contested} with C missing costs <b>${fmt(totalTruth)}</b>; C → ${contested} with B missing costs <b>${fmt(totalAlternative)}</b>. The smaller total wins — B overlaps ${contested} more (lower cost), and C is hidden behind B.`);
+    }
     if(r.id==='crossing'&&cue==='predicted')parts.push('The prediction carries each person one step further along their path, past the other, so the cheap cells are the right ones. DeepSORT would also compare appearance — here the jacket colours.');
     return parts.join(' ');
   }
