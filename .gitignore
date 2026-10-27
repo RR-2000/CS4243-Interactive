@@ -1,0 +1,15 @@
+# Local image-review cache used while curating the Lecture 4 material set.
+.material-candidates/
+__pycache__/
+*.pyc
+
+# Superseded two-photo classifier assets; the demo uses train-01 through train-08.
+images/lecture4/materials/leaves-train-1.jpg
+images/lecture4/materials/leaves-train-2.jpg
+images/lecture4/materials/wood-train-1.jpg
+images/lecture4/materials/wood-train-2.jpg
+images/lecture4/materials/knit-train-1.jpg
+images/lecture4/materials/knit-train-2.jpg
+
+# Superseded leaf class, replaced by a visually coherent real-grass class.
+images/lecture4/materials/leaves-*.jpg
