@@ -28,13 +28,13 @@ The **Stereo & depth** section follows "10. Depth Estimation & 3D Reconstruction
 
 ## Lecture 12 · Tracking labs
 
-- **Live MOSSE vs. NCC tracker** — draw a box on the webcam; a fixed NCC template and a MOSSE filter run side by side with live response maps and PSR. The camera needs HTTPS or `localhost` (GitHub Pages is fine); video never leaves the browser. A *Recorded clips* source replays three short real clips from the OTB-100 tracking benchmark (Wu, Lim and Yang, TPAMI 2015) with their ground-truth boxes — Dudek (head turn), Woman (occlusion) and Walking2 (walk past) — in `images/tracking/`, for when no camera is available.
+- **Live MOSSE vs. NCC tracker** — draw a box on the webcam; a fixed NCC template and a MOSSE filter run side by side with live response maps and PSR. The camera needs HTTPS or `localhost` (GitHub Pages is fine); video never leaves the browser. A *Recorded clips* source replays three short real clips from the OTB-100 tracking benchmark (Wu, Lim and Yang, TPAMI 2015) with their ground-truth boxes — Dudek (head turn), Woman (occlusion), Walking2 (walk past) and Shaking (learning rate η) — in `images/tracking/`, for when no camera is available.
 - **Data association exercise** — drag track IDs onto detections in the next frame and compare with greedy and minimum-cost (Hungarian) assignment.
 
 Code lives in `js/tracking/`. Checks:
 
 - `node --test tests/*.test.mjs` — FFT, trackers and association logic.
-- Serve the repository root (`python3 -m http.server`) and open `/tests/clip-check.html` — replays the three recorded clips frame by frame and checks that the default settings still produce the outcomes the lecture describes. Re-run it after changing the tracker parameters.
+- Serve the repository root (`python3 -m http.server`) and open `/tests/clip-check.html` — replays the four recorded clips frame by frame and checks that the default settings still produce the outcomes the lecture describes. Re-run it after changing the tracker parameters.
 
 ## Bundled images
 

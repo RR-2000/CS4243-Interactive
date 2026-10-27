@@ -14,7 +14,7 @@
 </head>
 <body>
   <h1>Tracking clip check</h1>
-  <p>Replays the three recorded OTB clips of the MOSSE vs. NCC lab frame by frame, exactly as the page does, and checks that the default settings still show what the lecture claims. Serve the repository root (for example <code>python3 -m http.server</code>) and open <code>/tests/clip-check.html</code>.</p>
+  <p>Replays the four recorded OTB clips of the MOSSE vs. NCC lab frame by frame, exactly as the page does, and checks that the default settings still show what the lecture claims. Serve the repository root (for example <code>python3 -m http.server</code>) and open <code>/tests/clip-check.html</code>.</p>
   <p id="summary">Running…</p>
   <table><thead><tr><th>Clip</th><th>Settings</th><th>Expectation</th><th>NCC</th><th>MOSSE</th><th>Result</th></tr></thead><tbody id="rows"></tbody></table>
   <script type="module">
@@ -29,7 +29,9 @@
       {clip:'occlusion',settings:{gate:true},expect:'with the PSR gate MOSSE stays with her',check:r=>!r.mosse.lostAtEnd&&r.skipped>0},
       {clip:'crossing',settings:{},expect:'MOSSE is pulled away by the passer-by; the fixed NCC template is not',check:r=>r.mosse.lostAtEnd&&!r.ncc.lostAtEnd},
       {clip:'crossing',settings:{gate:true},expect:'the PSR gate does not help: the passer-by gives a sharp peak',check:r=>r.mosse.lostAtEnd},
-      {clip:'crossing',settings:{eta:.02},expect:'a slowly learning MOSSE (η = 0.02) stays with her',check:r=>!r.mosse.lostAtEnd}
+      {clip:'crossing',settings:{eta:.02},expect:'a slowly learning MOSSE (η = 0.02) stays with her',check:r=>!r.mosse.lostAtEnd},
+      {clip:'lighting',settings:{},expect:'η = 0.125 keeps up with the flashing stage lights',check:r=>!r.mosse.lostAtEnd&&r.mosse.share>=.85},
+      {clip:'lighting',settings:{eta:.02},expect:'η = 0.02 goes stale and loses the singer',check:r=>r.mosse.lostAtEnd&&r.mosse.share<.3}
     ];
 
     async function run({clip:key,settings}){
