@@ -1,5 +1,5 @@
 import {createTrackerLab} from './tracking/tracker-lab.js?v=3';
-import {createAssociationLab} from './tracking/association-lab.js?v=1';
+import {createAssociationLab} from './tracking/association-lab.js?v=3';
 import {DEFAULT_ETA,DEFAULT_PSR_THRESHOLD} from './tracking/trackers.js';
 import {createLecture4Experiments} from './lecture4.js?v=18';
 import {createNmsExperiment,nmsGuide,NMS_PYTHON_SAMPLE} from './nms.js?v=5';
@@ -95,17 +95,17 @@ createNmsExperiment(root),
   destroy(){destroyAnms()}
 },
 ...createLecture8Experiments(root,{getSource:()=>state.source,getSourceVersion:()=>state.version}),
+...createLecture10Experiments(root),
 {
   group:'Motion',
   id:'opticalFlow',
   icon:'↝',
-  title:'Optical flow: single vs multi-scale',
+  title:'Optical flow: single vs multi-scale (L11)',
   description:'Track the same Sintel motion with single-scale and pyramidal Lucas–Kanade.',
   state:{extraMotion:24,pyramidLevels:4,trackedPoints:220,arrowScale:1,viewFrame:null,selectedFlowPoint:null},
   mount(){mountOpticalFlow(this)},
   destroy(){destroyOpticalFlow(this)}
-},
-...createLecture10Experiments(root)
+}
 , {
   group:'Tracking',
   id:'mosseTracker',
@@ -121,7 +121,7 @@ createNmsExperiment(root),
   id:'dataAssociation',
   icon:'⇄',
   title:'Data association exercise (L12)',
-  description:'Drag each track onto a detection in the next frame, then compare your matching with greedy and Hungarian assignment.',
+  description:'On real PETS 2009 frames, decide which detection continues each track, then compare with the minimum-cost (Hungarian) matching.',
   state:{round:0,cue:null,assignment:{},checked:false,revealed:false},
   mount(){associationLab.mount(this)},
   destroy(){associationLab.destroy()}
@@ -2601,7 +2601,7 @@ function guideFor(id){
   if(id==='stereoMatching')return stereoGuide(s);
   if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants, with the same 17 × 17 window, iteration budget and validity test (window residual plus a forward–backward check). Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',`${s.pyramidLevels} (L0–L${s.pyramidLevels-1})`,`Number of resolutions including the full-resolution image L0; each further level halves width and height (OpenCV maxLevel = ${s.pyramidLevels-1}). Tracking starts at the smallest level and refines the doubled displacement at each finer level. 1 level = single-scale LK. In the “Why the pyramid helps” diagram, levels run left → right in computation order; thumbnails and the window are drawn at true relative scale, and |d| comes from a fixed ${FLOW_REFERENCE_LEVELS}-level reference run so it does not change with this slider.`),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
   if(id==='mosseTracker')return{overview:'Both trackers start from the same box and search the same window (2 × the box). Only the scoring model and the update rule differ, so every difference you see comes from “learn or don’t learn”.',params:[param('Video source',s.source==='clip'?`Recorded clip · ${{turn:'Dudek',occlusion:'Woman',crossing:'Walking2',lighting:'Shaking'}[s.scenario]}`:'Webcam','Recorded clips are real footage from the OTB-100 benchmark with per-frame ground-truth boxes, so the page can report when a tracker is lost. They are replayed frame by frame, so every run gives the same result.'),param('Learning rate η',Number(s.eta).toFixed(3),'MOSSE update A ← (1−η)A + η·new, B ← (1−η)B + η·new. Small η: stable but slow to adapt (goes stale). Large η: adapts fast but also learns occluders (drifts). NCC never updates.'),param('PSR threshold',s.threshold,'A peak with PSR below this is called weak. It colours the readouts in both modes and decides skipping when the gate is on. Bolme et al. report PSR ≈ 20–60 when tracking well and < 7 on failure.'),param('Skip update when the peak is weak',s.gate?'on':'off',s.gate?'On a weak frame MOSSE holds its box and does not train on the frame, so an occluder never enters A and B. Trade-off: a held box does not move, so a target that moves away while the peak is weak is left behind; practical trackers add a re-detection step.':'Off: MOSSE trains on every frame, even when the peak is weak.',s.gate),param('Search window','2 × box, one scale','Identical for both trackers. Neither estimates scale, so moving closer to the camera also breaks them.')],links:[link('MOSSE paper (Bolme et al., 2010)',WIKI.mosse),link('Video tracking',WIKI.videoTracking),link('Template matching',WIKI.template),link('Cross-correlation',WIKI.correlation)]};
-  if(id==='dataAssociation')return{overview:'Each detection may continue at most one track. Pair cost is 1 − IoU between the track’s reference box and the detection; leaving a track unmatched costs 1.00, worse than any admissible pair.',params:[param('Round',`${s.round+1}`,['Warm-up: the Data Association slide, with gating, a missing track and a new detection.','Greedy trap: taking the cheapest pair first strands a track; the minimum-total solution does not.','Crossing: two people swap sides between frames — the walk-past failure.'][s.round]),param('Cost measured from',s.cue==='predicted'?'Predicted box':'Last box',s.cue==='predicted'?'Constant-velocity prediction: last position + last displacement (the Kalman prediction in SORT, without noise terms).':'The track’s box at frame t. No motion model, so people who cross look closer to each other’s old positions.'),param('Gate','IoU < 0.2','Pairs that overlap less than this are shown as — and are never matched.'),param('Missing cost','1.00','The dummy column that lets the solver leave a track unmatched instead of forcing a bad match.')],links:[link('Hungarian algorithm',WIKI.hungarian),link('Assignment problem',WIKI.assignment),link('IoU (Jaccard index)',WIKI.iou),link('SORT',WIKI.sort),link('DeepSORT',WIKI.deepSort)]};
+  if(id==='dataAssociation')return{overview:'Each detection may continue at most one track. Pair cost is 1 − IoU between the track’s reference box and the detection; leaving a track unmatched costs 1.00, worse than any admissible pair.',params:[param('Round',`${s.round+1}`,['Who is who? (PETS 2009, frame 504): one-to-one matching, gating, a person hidden behind another (missing) and a newcomer (new track) — the Data Association slide.','Two people cross (PETS 2009, frame 624): with last-position costs the minimum-cost matching swaps their identities; a constant-velocity prediction (SORT) fixes it.'][s.round]),param('Cost measured from',s.cue==='predicted'?'Predicted box':'Last box',s.cue==='predicted'?'Constant-velocity prediction: last position + last displacement (the Kalman prediction in SORT, without noise terms).':'The track’s box at frame t. No motion model, so people who cross look closer to each other’s old positions.'),param('Gate','IoU < 0.2','Pairs that overlap less than this are shown as — and are never matched.'),param('Missing cost','1.00','The dummy column that lets the solver leave a track unmatched instead of forcing a bad match.')],links:[link('Hungarian algorithm',WIKI.hungarian),link('Assignment problem',WIKI.assignment),link('IoU (Jaccard index)',WIKI.iou),link('SORT',WIKI.sort),link('DeepSORT',WIKI.deepSort)]};
   return null;
 }
 

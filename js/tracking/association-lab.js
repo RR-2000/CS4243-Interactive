@@ -1,9 +1,10 @@
-// Lecture 12 · Drag-and-drop data-association exercise (tracks → detections in frame t + 1).
+// Lecture 12 · Drag-and-drop data-association exercise on real PETS 2009 frames:
+// frame t shows the tracked people, the next processed frame shows the detector's boxes.
 
-import {ROUNDS,MISSING,MISS_COST,costMatrix,assignmentCost,optimalAssignment,greedyAssignment,trueAssignment,sameAssignment,referenceBox} from './association.js';
+import {ROUNDS,MISSING,MISS_COST,costMatrix,assignmentCost,optimalAssignment,trueAssignment,sameAssignment,referenceBox} from './association.js';
+import {boxIoU} from './shared.js';
 
 const DRAG_THRESHOLD=5;
-const NEUTRAL_SHIRT='#8b95a5';
 const CUE_LABEL={last:'last-position',predicted:'predicted-position'};
 
 const fmt=value=>value.toFixed(2);
@@ -18,72 +19,67 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
   const trackColor=id=>round().tracks.find(t=>t.id===id)?.color??'#555';
 
   function layout(s){
+    const r=ROUNDS[s.round],later=`${r.seconds.toFixed(1)} s later`;
     return `<div class="controls assoc-controls">
-        <div class="control"><span class="control-label">Round</span>${segment('assocRound',ROUNDS.map((r,i)=>[String(i),`${i+1} · ${r.title}`]),String(s.round))}</div>
+        <div class="control"><span class="control-label">Round</span>${segment('assocRound',ROUNDS.map((x,i)=>[String(i),`${i+1} · ${x.title}`]),String(s.round))}</div>
         <div class="control"><span class="control-label">Cost is measured from</span>${segment('assocCue',[['last','Last box · no motion model'],['predicted','Predicted box · constant velocity (SORT)']],s.cue)}</div>
       </div>
-      <div class="instruction" id="assocStory"></div>
-      <div class="assoc-layout">
-        <figure class="card assoc-scene-card">
-          <figcaption><span>Frame t + 1 · drag each track onto its detection</span><small>● past positions · dashed = box used for the cost</small></figcaption>
-          <div class="assoc-scene"><svg id="assocScene" viewBox="0 0 640 360" role="group" aria-label="Detections in frame t + 1"></svg></div>
-          <div class="assoc-dock">
-            <div class="assoc-tray" data-drop="tray"><small>Tracks from frame t</small><div id="assocTray" class="assoc-chips"></div></div>
-            <div class="assoc-missing" data-drop="missing"><button type="button" class="assoc-missing-target" data-drop="missing">No detection<small>track is missing · cost ${fmt(MISS_COST)}</small></button><div id="assocMissing" class="assoc-chips"></div></div>
-          </div>
-        </figure>
-        <div class="assoc-side">
-          <figure class="card"><figcaption><span>Cost matrix C = 1 − IoU</span><small>— gated (IoU &lt; 0.2)</small></figcaption><div class="assoc-matrix" id="assocMatrix"></div><div class="assoc-total" id="assocTotal"></div></figure>
-          <div class="assoc-actions"><button class="button" type="button" id="assocCheck">Check my assignment</button><button class="button ghost" type="button" id="assocSolve">Show Hungarian answer</button><button class="button ghost" type="button" id="assocReset">Reset</button><button class="button ghost" type="button" id="assocNext">Next round →</button></div>
-          <div class="note assoc-feedback" id="assocFeedback" role="status" aria-live="polite">Drag a coloured track tag onto a detection box. Tap-to-select works too: tap a tag, then tap a box.</div>
-        </div>
+      <div class="instruction assoc-story" id="assocStory"></div>
+      <ol class="assoc-steps">
+        <li><b>Look at frame t.</b> The tracker already knows these people (coloured boxes); the dots show where each of them walked.</li>
+        <li><b>Now look ${later}.</b> The detector found the white boxes, but it does not know who is who. Drag each tag onto the box that person is in now — or onto <i>Not detected</i>.</li>
+        <li><b>Press Check</b> to see how a tracker decides: the cost matrix and the minimum-cost (Hungarian) matching.</li>
+      </ol>
+      <div class="assoc-frames">
+        <figure class="card assoc-frame"><figcaption><span>① Frame t · people being tracked</span><small>PETS 2009 · frame ${r.frame}</small></figcaption>
+          <div class="assoc-stage-wrap"><div class="assoc-stage"><img src="${r.images[0]}" alt="Frame t with the tracked people" width="${r.width}" height="${r.height}"><svg id="assocBefore" viewBox="0 0 ${r.width} ${r.height}" aria-hidden="true"></svg></div></div></figure>
+        <figure class="card assoc-frame"><figcaption><span>② ${later} · detector boxes: who is who?</span><small>dashed = where the cost expects each track</small></figcaption>
+          <div class="assoc-stage-wrap"><div class="assoc-stage"><img src="${r.images[1]}" alt="The next frame with the detector's boxes" width="${r.width}" height="${r.height}"><svg id="assocScene" viewBox="0 0 ${r.width} ${r.height}" role="group" aria-label="Detections ${later}"></svg></div></div></figure>
       </div>
-      <div class="note flow-takeaway"><b>Classroom takeaway:</b> association is a <b>one-to-one matching</b> on a cost matrix. Gating removes impossible pairs, unmatched tracks become <i>missing</i>, unmatched detections start <i>new tracks</i>. Greedy matching can paint itself into a corner; the Hungarian algorithm minimises the <b>total</b> cost. And the answer is only as good as the cost: with a motion model (SORT) or appearance features (DeepSORT), people who cross keep their identities.</div>`;
+      <div class="assoc-layout">
+        <div class="card assoc-answer">
+          <div class="assoc-answer-title">③ Your answer</div>
+          <div class="assoc-dock">
+            <div class="assoc-tray" data-drop="tray"><small>Drag these tags onto the white boxes</small><div id="assocTray" class="assoc-chips"></div></div>
+            <div class="assoc-missing" data-drop="missing"><button type="button" class="assoc-missing-target" data-drop="missing">Not detected<small>the person has no box in this frame · cost ${fmt(MISS_COST)}</small></button><div id="assocMissing" class="assoc-chips"></div></div>
+          </div>
+          <div class="assoc-actions"><button class="button" type="button" id="assocCheck">Check my answer</button><button class="button ghost" type="button" id="assocSolve">Show Hungarian answer</button><button class="button ghost" type="button" id="assocReset">Reset</button><button class="button ghost" type="button" id="assocNext">Next round →</button></div>
+          <div class="note assoc-feedback" id="assocFeedback" role="status" aria-live="polite"></div>
+        </div>
+        <figure class="card"><figcaption><span>How a tracker decides · cost = 1 − IoU</span><small>— gated (IoU &lt; 0.2)</small></figcaption><div class="assoc-matrix" id="assocMatrix"></div><div class="assoc-explain" id="assocExplain">Hover a cell: frame ② highlights the two boxes it compares.</div><div class="assoc-total" id="assocTotal"></div></figure>
+      </div>
+      <div class="note flow-takeaway"><b>Classroom takeaway:</b> association is a <b>one-to-one matching</b> on a cost matrix. Gating removes impossible pairs, a track without a detection is kept as <i>missing</i>, a detection without a track starts a <i>new track</i>, and the Hungarian algorithm picks the matching with the lowest <b>total</b> cost. The answer is only as good as the cost: with a motion model (SORT) or appearance features (DeepSORT), people who cross keep their identities.</div>
+      <div class="flow-source-note">Frames: PETS 2009 S2L1 (J. Ferryman and A. Shahrokni, PETS 2009 workshop), the sequence on the lecture slides, via MOTChallenge MOT15 (L. Leal-Taixé et al., 2015), licensed CC BY-NC-SA 3.0. Coloured tracks: MOT15 ground truth; white boxes: MOT15 public detections (score ≥ 20). The two frames are ${r.gap} video frames apart (7 fps).</div>`;
   }
 
-  // ----- scene -----
-  function boxRect(box,attrs){return `<rect x="${box.cx-box.w/2}" y="${box.cy-box.h/2}" width="${box.w}" height="${box.h}" ${attrs}/>`}
+  // ----- frames -----
+  const rect=(box,attrs)=>`<rect x="${box.cx-box.w/2}" y="${box.cy-box.h/2}" width="${box.w}" height="${box.h}" ${attrs}/>`;
+  const label=(text,x,y,fill,ink='#fff')=>`<g pointer-events="none"><rect x="${x}" y="${y-13}" width="${8+text.length*7}" height="15" rx="3" fill="${fill}"/><text x="${x+4}" y="${y-2}" font-size="11" font-weight="700" fill="${ink}">${text}</text></g>`;
 
-  function trackSvg(track,cue,index){
-    const ref=referenceBox(track,cue),last=track.history[track.history.length-1];
-    const dots=track.history.map((p,i)=>`<circle cx="${p.cx}" cy="${p.cy}" r="5" fill="${track.color}" opacity="${.35+.3*i}"/>`).join('');
-    const path=`<polyline points="${track.history.map(p=>`${p.cx},${p.cy}`).join(' ')}" fill="none" stroke="${track.color}" stroke-width="2" opacity=".6"/>`;
-    const arrow=cue==='predicted'?`<line x1="${last.cx}" y1="${last.cy}" x2="${ref.cx}" y2="${ref.cy}" stroke="${track.color}" stroke-width="2.5" marker-end="url(#assocArrow${track.id})"/>`:'';
-    return `<g class="assoc-track" pointer-events="none"><defs><marker id="assocArrow${track.id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0L10,5L0,10z" fill="${track.color}"/></marker></defs>${path}${dots}${arrow}${boxRect(ref,`fill="none" stroke="${track.color}" stroke-width="3" stroke-dasharray="8 5"`)}<text x="${ref.cx-ref.w/2+3}" y="${ref.cy+ref.h/2+15+index*15}" fill="${track.color}" font-size="13" font-weight="700">${track.id}${cue==='predicted'?' predicted':' at t'}</text></g>`;
-  }
-
-  function detectionSvg(detection,r,owner,gated){
-    const top=detection.cy-detection.h/2,shirt=r.showShirts&&detection.track?trackColor(detection.track):NEUTRAL_SHIRT;
-    const ownerTag=owner?`<g class="assoc-tag" data-track="${owner}" tabindex="0" role="button" aria-label="Track ${owner}, assigned to ${detection.id}"><circle cx="${detection.cx+detection.w/2-4}" cy="${top+4}" r="15" fill="${trackColor(owner)}" stroke="${gated?'#ef4444':'#fff'}" stroke-width="2.5" ${gated?'stroke-dasharray="4 3"':''}/><text x="${detection.cx+detection.w/2-4}" y="${top+9}" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">${owner}</text></g>`:'';
-    return `<g class="assoc-detection${owner?' assigned':''}" data-drop="${detection.id}" tabindex="0" role="button" aria-label="Detection ${detection.id}${owner?`, currently ${owner}`:''}">
-      ${boxRect(detection,`class="assoc-hit" fill="${owner?trackColor(owner):'#ffffff'}" fill-opacity="${owner?.22:.04}" stroke="#e2e8f0" stroke-width="2"`)}
-      <circle cx="${detection.cx}" cy="${top+24}" r="15" fill="#d8b08c"/>
-      <rect x="${detection.cx-23}" y="${top+44}" width="46" height="${detection.h-54}" rx="12" fill="${shirt}"/>
-      <rect x="${detection.cx-detection.w/2}" y="${top-20}" width="30" height="18" fill="#e2e8f0"/><text x="${detection.cx-detection.w/2+15}" y="${top-6}" text-anchor="middle" font-size="13" font-weight="700" fill="#111">${detection.id}</text>
-      ${ownerTag}
-    </g>`;
-  }
-
-  // Zoom the 640 × 360 frame onto the boxes of this round, keeping the 16 : 9 aspect ratio.
-  function fitView(r){
-    const boxes=[...r.detections,...r.tracks.flatMap(t=>[...t.history,referenceBox(t,'predicted')])];
-    let x0=Math.min(...boxes.map(b=>b.cx-b.w/2))-30,x1=Math.max(...boxes.map(b=>b.cx+b.w/2))+30;
-    let y0=Math.min(...boxes.map(b=>b.cy-b.h/2))-40,y1=Math.max(...boxes.map(b=>b.cy+b.h/2))+50;
-    const w=Math.max(x1-x0,(y1-y0)*16/9),h=w*9/16,cx=(x0+x1)/2,cy=(y0+y1)/2;
-    const x=Math.min(Math.max(cx-w/2,0),Math.max(0,640-w)),y=Math.min(Math.max(cy-h/2,0),Math.max(0,360-h));
-    return{x,y,w:Math.min(w,640),h:Math.min(h,360)};
+  function renderBefore(){
+    const r=round();
+    $('#assocBefore').innerHTML=r.tracks.map(track=>{
+      const h=track.history,last=h[h.length-1],feet=h.map(b=>`${b.cx},${b.cy+b.h/2}`);
+      const dots=h.slice(0,-1).map((b,i)=>`<circle cx="${b.cx}" cy="${b.cy+b.h/2}" r="3" fill="${track.color}" opacity="${.45+.25*i}"/>`).join('');
+      return `<polyline points="${feet.join(' ')}" fill="none" stroke="${track.color}" stroke-width="2"/>${dots}${rect(last,`fill="none" stroke="${track.color}" stroke-width="2.5"`)}${label(track.id,last.cx-last.w/2,last.cy-last.h/2,track.color)}`;
+    }).join('');
   }
 
   function renderScene(){
-    const s=state(),r=round(),m=matrix(),owners=Object.fromEntries(Object.entries(s.assignment).filter(([,d])=>d!==MISSING).map(([t,d])=>[d,t]));
-    const pillar=r.pillar?`<rect x="${r.pillar.x}" y="40" width="${r.pillar.w}" height="320" fill="#3b4250"/><text x="${r.pillar.x+r.pillar.w/2}" y="60" fill="#9aa3b2" font-size="11" text-anchor="middle">pillar</text>`:'';
-    const detections=r.detections.map((d,j)=>{
-      const owner=owners[d.id],i=r.tracks.findIndex(t=>t.id===owner);
-      return detectionSvg(d,r,owner,owner?m[i][j].gated:false);
+    const s=state(),r=round(),m=matrix(),owners=Object.fromEntries(Object.entries(s.assignment).filter(([,d])=>d!==MISSING).map(([t,d])=>[d,t])),focus=rt.focus;
+    const refs=r.tracks.map((track,i)=>{
+      const ref=referenceBox(track,s.cue),on=!focus||focus.i===i;
+      return `<g pointer-events="none" opacity="${on?1:.25}">${rect(ref,`fill="none" stroke="${track.color}" stroke-width="${focus?.i===i?2.5:1.5}" stroke-dasharray="5 3"`)}</g>`;
     }).join('');
-    const view=fitView(r);
-    $('#assocScene').setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`);
-    $('#assocScene').innerHTML=`<rect width="640" height="360" fill="#1d2129"/><polygon points="0,280 640,280 640,360 0,360" fill="#2a303b"/><line x1="0" y1="280" x2="640" y2="280" stroke="#3b4250"/><text x="${view.x+10}" y="${view.y+18}" fill="#9aa3b2" font-size="12">frame t + 1 · detector boxes + track history</text>${detections}${r.tracks.map((t,i)=>trackSvg(t,s.cue,i)).join('')}${pillar}`;
+    const detections=r.detections.map((d,j)=>{
+      const owner=owners[d.id],i=r.tracks.findIndex(t=>t.id===owner),gated=owner?m[i][j].gated:false,on=!focus||focus.j===j;
+      const tag=owner?`<g class="assoc-tag" data-track="${owner}" tabindex="0" role="button" aria-label="Track ${owner}, assigned to ${d.id}"><circle cx="${d.cx+d.w/2-2}" cy="${d.cy-d.h/2+2}" r="10" fill="${trackColor(owner)}" stroke="${gated?'#ef4444':'#fff'}" stroke-width="2" ${gated?'stroke-dasharray="3 2"':''}/><text x="${d.cx+d.w/2-2}" y="${d.cy-d.h/2+6}" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">${owner}</text></g>`:'';
+      return `<g class="assoc-detection${owner?' assigned':''}" data-drop="${d.id}" tabindex="0" role="button" aria-label="Detection ${d.id}${owner?`, currently ${owner}`:''}" opacity="${on?1:.35}">
+        ${rect(d,`class="assoc-hit" fill="${owner?trackColor(owner):'#ffffff'}" fill-opacity="${owner?.28:.06}" stroke="#ffffff" stroke-width="${focus?.j===j?3:2}"`)}
+        ${label(d.id,d.cx-d.w/2,d.cy-d.h/2,'#ffffff','#111')}${tag}
+      </g>`;
+    }).join('');
+    $('#assocScene').innerHTML=refs+detections;
   }
 
   function chip(track){
@@ -101,7 +97,8 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
     const s=state(),r=round(),m=matrix(),best=s.revealed||s.checked?optimalAssignment(r,m).assignment:null;
     const cell=(track,target,content,gated)=>{
       const chosen=s.assignment[track.id]===target,optimal=best?.[track.id]===target;
-      return `<td class="${gated?'gated':''}${chosen?' chosen':''}${optimal?' optimal':''}" style="--chip:${track.color}">${content}</td>`;
+      const pair=target===MISSING?'':` data-pair="${r.tracks.indexOf(track)},${r.detections.findIndex(d=>d.id===target)}"`;
+      return `<td class="${gated?'gated':''}${chosen?' chosen':''}${optimal?' optimal':''}" style="--chip:${track.color}"${pair}>${content}</td>`;
     };
     const header=`<tr><th>Track \\ detection</th>${r.detections.map(d=>`<th>${d.id}</th>`).join('')}<th>missing</th></tr>`;
     const rows=r.tracks.map((track,i)=>`<tr><th><span class="assoc-dot" style="--chip:${track.color}"></span>${track.id}</th>${r.detections.map((d,j)=>cell(track,d.id,m[i][j].gated?'—':fmt(m[i][j].cost),m[i][j].gated)).join('')}${cell(track,MISSING,fmt(MISS_COST),false)}</tr>`).join('');
@@ -119,8 +116,8 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
   // Re-rendering replaces the chips and boxes, so put keyboard focus back on the same item.
   function render(){
     const r=round(),focused=document.activeElement,key=root.contains(focused)?focused.dataset?.track?`[data-track="${focused.dataset.track}"]`:focused.dataset?.drop?`[data-drop="${focused.dataset.drop}"]`:null:null;
-    $('#assocStory').innerHTML=`<b>Round ${state().round+1} · ${r.title}.</b> ${r.story}`;
-    renderScene();renderDock();renderMatrix();
+    $('#assocStory').innerHTML=`<b>Round ${state().round+1} · ${r.title}${/[?.!]$/.test(r.title)?'':'.'}</b> ${r.story}`;
+    renderBefore();renderScene();renderDock();renderMatrix();
     if(key&&!root.contains(focused))root.querySelector(key)?.focus();
   }
 
@@ -133,7 +130,7 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
   }
 
   function setFeedback(html,tone=''){
-    const box=$('#assocFeedback');box.innerHTML=html||'Drag a coloured track tag onto a detection box — or onto “No detection”. Then press <b>Check</b>.';
+    const box=$('#assocFeedback');box.innerHTML=html||'Drag each tag onto a white box in frame ② — or onto “Not detected”. On a phone: tap a tag, then tap a box.';
     box.className=`note assoc-feedback ${tone}`;
   }
 
@@ -141,12 +138,12 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
     const truth=trueAssignment(r);
     const lines=r.tracks.map((track,i)=>{
       const chosen=assignment[track.id],right=truth[track.id],j=r.detections.findIndex(d=>d.id===chosen);
-      if(chosen===right)return`✓ <b>${track.id}</b> → ${right===MISSING?'missing: no detection is close to its prediction (occluded or left the frame), so the track is kept but not updated':right}`;
-      const why=chosen!==MISSING&&m[i][j]?.gated?' — that pair is gated, the boxes barely overlap':'';
+      if(chosen===right)return`✓ <b>${track.id}</b> → ${right===MISSING?'not detected: the person is hidden, so the detector returned no box for them. The track is kept as “missing” and waits for them to reappear':right}`;
+      const why=chosen!==MISSING&&m[i][j]?.gated?' — that pair is gated: the boxes barely overlap':chosen!==MISSING&&right===MISSING?` — ${chosen} belongs to someone else, and one box can only continue one track`:'';
       return`✗ <b>${track.id}</b> → ${chosen===MISSING?'missing':chosen}${why}. Correct: ${right===MISSING?'missing':right}.`;
     });
     const used=new Set(Object.values(assignment));
-    r.detections.filter(d=>!used.has(d.id)).forEach(d=>lines.push(d.track?`✗ <b>${d.id}</b> was left unmatched, but it is ${d.track}.`:`✓ <b>${d.id}</b> is unmatched → it starts a new (tentative) track.`));
+    r.detections.filter(d=>!used.has(d.id)).forEach(d=>lines.push(d.track?`✗ <b>${d.id}</b> was left unmatched, but it is ${d.track}.`:`✓ <b>${d.id}</b> matches nobody we were tracking — a person who just walked in. It starts a new track.`));
     return lines;
   }
 
@@ -154,17 +151,14 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
     const best=optimalAssignment(r,m),truth=trueAssignment(r),parts=[];
     if(sameAssignment(r,best.assignment,truth))parts.push(`The minimum-cost (Hungarian) assignment agrees: ${describe(r,best.assignment)}, total ${fmt(best.total)}.`);
     else parts.push(`With ${CUE_LABEL[cue]} costs the minimum-cost assignment is <b>${describe(r,best.assignment)}</b> (total ${fmt(best.total)}) — an <b>ID switch</b>. ${cue==='last'?'Without a motion model the correct pairs are even gated (—): the tracker cannot consider them. Switch “Cost is measured from” to <b>Predicted box</b> and look at the matrix again.':''}`);
-    if(r.id==='greedy'){
-      const greedy=greedyAssignment(r,m);
-      if(!sameAssignment(r,greedy.assignment,best.assignment))parts.push(`Greedy matching takes the cheapest cell first (${describe(r,greedy.assignment)}) and is then stuck: total ${fmt(greedy.total)} &gt; ${fmt(best.total)}.`);
-    }
-    if(r.id==='crossing'&&cue==='predicted')parts.push('A constant-velocity prediction carries each person past the other, so the cheap cells are the right ones. DeepSORT adds appearance (shirt colour) as a second cue.');
+    if(r.id==='warmup')parts.push('Look at the d2 column: B and C both want d2, but one box can continue only one track. B is cheaper, so C becomes “missing”.');
+    if(r.id==='crossing'&&cue==='predicted')parts.push('The prediction carries each person one step further along their path, past the other, so the cheap cells are the right ones. DeepSORT would also compare appearance — here the jacket colours.');
     return parts.join(' ');
   }
 
   function check(){
     const s=state(),r=round(),m=matrix(),missing=r.tracks.filter(t=>!s.assignment[t.id]).map(t=>t.id);
-    if(missing.length){setFeedback(`Place every track first: <b>${missing.join(', ')}</b> ${missing.length>1?'are':'is'} still in the tray. Drop it on a detection, or on “No detection” if none fits.`,'warn');return}
+    if(missing.length){setFeedback(`Place every track first: <b>${missing.join(', ')}</b> ${missing.length>1?'are':'is'} still in the tray. Drop it on a white box, or on “Not detected” if that person has no box.`,'warn');return}
     const correct=sameAssignment(r,s.assignment,trueAssignment(r));
     s.checked=true;render();
     setFeedback(`<b>${correct?'Correct identities ✓':'Not quite ✗'}</b><ul>${verdictLines(r,m,s.assignment).map(l=>`<li>${l}</li>`).join('')}</ul><p>${solverComparison(r,m,s.cue)}</p>`,correct?'good':'bad');
@@ -179,7 +173,7 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
 
   function setRound(index){
     const s=state();
-    s.round=index;s.cue=ROUNDS[index].defaultCue;s.assignment={};s.checked=false;s.revealed=false;rt.selected=null;
+    s.round=index;s.cue=ROUNDS[index].defaultCue;s.assignment={};s.checked=false;s.revealed=false;rt.selected=null;rt.focus=null;
     build();refreshGuide();
   }
 
@@ -239,6 +233,20 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
       const target=resolveDrop(event.target.closest('[data-drop]'),event.clientX,event.clientY);
       if(target&&rt.selected)assign(rt.selected,target.dataset.drop);
     },{signal});
+    // Hovering (or tapping) a cost cell highlights the two boxes it compares and spells out the IoU.
+    const focusPair=cell=>{
+      const next=cell?.dataset.pair?cell.dataset.pair.split(',').map(Number):null;
+      if(String(next)===String(rt.focus?[rt.focus.i,rt.focus.j]:null))return;
+      rt.focus=next?{i:next[0],j:next[1]}:null;
+      renderScene();
+      const explain=$('#assocExplain');if(!explain)return;
+      if(!rt.focus){explain.textContent='Hover a cell: frame ② highlights the two boxes it compares.';return}
+      const r=round(),track=r.tracks[rt.focus.i],d=r.detections[rt.focus.j],iou=boxIoU(referenceBox(track,state().cue),d),cost=Math.round((1-iou)*100)/100;
+      explain.innerHTML=`<b style="color:${track.color}">${track.id}</b> ${state().cue==='predicted'?'predicted':'last'} box (dashed) vs <b>${d.id}</b>: overlap ÷ union = IoU ${iou.toFixed(2)} → cost 1 − ${iou.toFixed(2)} = <b>${fmt(cost)}</b>${cost>.8?' — above 0.8, so the pair is gated (—)':''}.`;
+    };
+    root.addEventListener('mouseover',event=>focusPair(event.target.closest('#assocMatrix td[data-pair]')),{signal});
+    root.addEventListener('mouseleave',()=>focusPair(null),{signal});
+    root.addEventListener('pointerdown',event=>{const cell=event.target.closest('td[data-pair]');if(cell&&event.pointerType!=='mouse')focusPair(cell)},{signal});
     root.addEventListener('keydown',event=>{
       if(event.key!=='Enter'&&event.key!==' ')return;
       const element=event.target.closest('g[data-track], g[data-drop]');
@@ -263,7 +271,7 @@ export function createAssociationLab({root,$,segment,bindSegment,refreshGuide}){
   function mount(experiment){
     destroy();
     if(!experiment.state.cue)experiment.state.cue=ROUNDS[experiment.state.round].defaultCue;
-    rt={experiment,selected:null,drag:null,abort:new AbortController()};
+    rt={experiment,selected:null,drag:null,focus:null,abort:new AbortController()};
     root.innerHTML='<div id="assocLab"></div>';
     bindInteraction(rt.abort.signal);
     build();

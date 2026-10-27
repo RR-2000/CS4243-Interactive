@@ -29,7 +29,7 @@ The **Stereo & depth** section follows "10. Depth Estimation & 3D Reconstruction
 ## Lecture 12 · Tracking labs
 
 - **Live MOSSE vs. NCC tracker** — draw a box on the webcam; a fixed NCC template and a MOSSE filter run side by side with live response maps and PSR. The camera needs HTTPS or `localhost` (GitHub Pages is fine); video never leaves the browser. A *Recorded clips* source replays three short real clips from the OTB-100 tracking benchmark (Wu, Lim and Yang, TPAMI 2015) with their ground-truth boxes — Dudek (head turn), Woman (occlusion), Walking2 (walk past) and Shaking (learning rate η) — in `images/tracking/`, for when no camera is available.
-- **Data association exercise** — drag track IDs onto detections in the next frame and compare with greedy and minimum-cost (Hungarian) assignment.
+- **Data association exercise** — two real moments from the PETS 2009 sequence on the lecture slides (via MOTChallenge MOT15, CC BY-NC-SA 3.0; images in `images/association/`): frame t shows the tracked people, the next frame shows the public detections, and students drag track IDs onto detections before comparing with the minimum-cost (Hungarian) matching under last-position and constant-velocity costs.
 
 Code lives in `js/tracking/`. Checks:
 

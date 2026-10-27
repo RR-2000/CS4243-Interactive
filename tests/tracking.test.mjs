@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {fft2d} from '../js/tracking/fft.js';
 import {MosseTracker,NccTracker,DEFAULT_PSR_THRESHOLD} from '../js/tracking/trackers.js';
 import {boxIoU,seededRandom} from '../js/tracking/shared.js';
-import {ROUNDS,MISSING,costMatrix,optimalAssignment,greedyAssignment,trueAssignment,assignmentCost,sameAssignment} from '../js/tracking/association.js';
+import {ROUNDS,MISSING,costMatrix,optimalAssignment,trueAssignment,assignmentCost,sameAssignment} from '../js/tracking/association.js';
 
 const W=200,H=150;
 
@@ -95,33 +95,30 @@ test('NCC keeps its first template forever', ()=>{
 // ----- data association -----
 const round=id=>ROUNDS.find(r=>r.id===id);
 
-test('warm-up round reproduces the slide: A→d2, B→d1, C missing, d3 left for a new track', ()=>{
+test('PETS warm-up: optimal matching finds the true identities, the hidden person is missing, the newcomer is new', ()=>{
   const r=round('warmup'),matrix=costMatrix(r,'predicted'),best=optimalAssignment(r,matrix);
-  assert.deepEqual(best.assignment,{A:'d2',B:'d1',C:MISSING});
-  assert.ok(matrix[2].every(cell=>cell.gated),'track C should be gated against every detection');
-  assert.ok(Object.values(best.assignment).every(d=>d!=='d3'));
-  assert.ok(Math.abs(matrix[0][1].cost-.1)<.03&&Math.abs(matrix[1][0].cost-.2)<.03);
-});
-
-test('greedy matching falls into the trap that the optimal assignment avoids', ()=>{
-  const r=round('greedy'),matrix=costMatrix(r,'predicted');
-  const greedy=greedyAssignment(r,matrix),best=optimalAssignment(r,matrix);
-  assert.equal(greedy.assignment.B,MISSING);
-  assert.ok(greedy.total>best.total);
   assert.ok(sameAssignment(r,best.assignment,trueAssignment(r)));
+  assert.equal(best.assignment.C,MISSING);
+  const newcomer=r.detections.find(d=>d.track===null);
+  assert.ok(newcomer,'one detection belongs to someone who was not tracked');
+  assert.ok(matrix.every(row=>row[r.detections.indexOf(newcomer)].gated),'the newcomer is gated against every track');
+  const d2=r.detections.findIndex(d=>d.id===best.assignment.B);
+  assert.ok(!matrix[2][d2].gated,'B and the hidden C compete for the same box');
 });
 
-test('crossing: last-position costs swap identities, constant-velocity prediction keeps them', ()=>{
-  const r=round('crossing');
+test('PETS crossing: last-position costs swap the two identities, constant-velocity prediction keeps them', ()=>{
+  const r=round('crossing'),truth=trueAssignment(r);
   const withoutMotion=optimalAssignment(r,costMatrix(r,'last')).assignment;
   const withMotion=optimalAssignment(r,costMatrix(r,'predicted')).assignment;
-  assert.deepEqual(withoutMotion,{A:'d1',B:'d2'});
-  assert.ok(sameAssignment(r,withMotion,trueAssignment(r)));
+  assert.deepEqual(withoutMotion,{A:truth.B,B:truth.A});
+  assert.ok(sameAssignment(r,withMotion,truth));
 });
 
 test('assignmentCost rejects gated pairs and charges for missing tracks', ()=>{
-  const r=round('warmup'),matrix=costMatrix(r,'predicted');
-  assert.equal(assignmentCost(r,matrix,{A:'d3',B:'d1',C:MISSING}),null);
-  const total=assignmentCost(r,matrix,{A:'d2',B:'d1',C:MISSING});
-  assert.ok(Math.abs(total-(matrix[0][1].cost+matrix[1][0].cost+1))<1e-12);
+  const r=round('warmup'),matrix=costMatrix(r,'predicted'),truth=trueAssignment(r);
+  const newcomer=r.detections.find(d=>d.track===null).id;
+  assert.equal(assignmentCost(r,matrix,{A:newcomer,B:truth.B,C:MISSING}),null);
+  const a=r.detections.findIndex(d=>d.id===truth.A),b=r.detections.findIndex(d=>d.id===truth.B);
+  const total=assignmentCost(r,matrix,{A:truth.A,B:truth.B,C:MISSING});
+  assert.ok(Math.abs(total-(matrix[0][a].cost+matrix[1][b].cost+1))<1e-12);
 });

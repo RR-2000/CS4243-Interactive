@@ -1,63 +1,32 @@
-// Data association for the Lecture 12 exercise: cost matrix, gating, greedy vs. optimal assignment.
+// Data association for the Lecture 12 exercise: cost matrix, gating and the minimum-cost assignment.
 // Cost of a pair = 1 − IoU(track box, detection box), as in SORT; a pair is gated when IoU < 0.2.
 // Leaving a track unmatched ("missing") costs MISS_COST, which is worse than any admissible pair —
 // the usual dummy-column trick that lets a minimum-cost (Hungarian) solver leave tracks unmatched.
 
 import {boxIoU} from './shared.js';
+import {SCENES} from './association-data.js';
 
 export const GATE_COST=.8;
 export const MISS_COST=1;
 export const MISSING='missing';
 
-const BOX={w:70,h:150};
-const person=(cx,cy)=>({cx,cy,...BOX});
-
+// Two real moments from the PETS 2009 footage on the lecture slides; see association-data.js.
 export const ROUNDS=[
   {
     id:'warmup',
-    title:'Warm-up',
+    title:'Who is who?',
+    slide:'Data Association slide',
     defaultCue:'predicted',
-    story:'A corridor at frame t + 1. Tracks <b>A</b> and <b>B</b> walk side by side, <b>C</b> is leaving behind the pillar on the right, and someone new walks in on the left. Same structure as the Data Association slide.',
-    tracks:[
-      {id:'A',color:'#e8590c',history:[person(201,200),person(234,200),person(267,200)]},
-      {id:'B',color:'#0d9488',history:[person(248,200),person(278,200),person(308,200)]},
-      {id:'C',color:'#7c3aed',history:[person(520,196),person(552,196),person(584,196)]}
-    ],
-    detections:[
-      {id:'d1',...person(330,200),track:'B'},
-      {id:'d2',...person(296,200),track:'A'},
-      {id:'d3',...person(70,204),track:null}
-    ],
-    pillar:{x:600,w:40}
-  },
-  {
-    id:'greedy',
-    title:'Greedy trap',
-    defaultCue:'predicted',
-    story:'Two people walk right, close together. <b>B</b> slowed down and <b>A</b> is half hidden behind B, so A’s detection box came out shifted to the left. A “take the cheapest pair first” rule grabs the wrong pair here.',
-    tracks:[
-      {id:'A',color:'#e8590c',history:[person(200,200),person(230,200),person(260,200)]},
-      {id:'B',color:'#0d9488',history:[person(235,200),person(264,200),person(293,200)]}
-    ],
-    detections:[
-      {id:'d1',...person(300,200),track:'B'},
-      {id:'d2',...person(265,200),track:'A'}
-    ]
+    story:'Three people are being tracked (<b>A</b>, <b>B</b>, <b>C</b>). In the next frame the detector returns three boxes, but it does not know who is who. Note that <b>C</b> walks behind <b>B</b> — and one box belongs to someone who was not tracked before.',
+    ...SCENES.warmup
   },
   {
     id:'crossing',
-    title:'Crossing',
+    title:'Two people cross',
+    slide:'SORT slide',
     defaultCue:'last',
-    story:'<b>A</b> (orange shirt) walks right and <b>B</b> (teal shirt) walks left; they pass each other between frame t and t + 1 — the “walk past a colleague” failure. Assign by what you see, then compare the two cost models.',
-    showShirts:true,
-    tracks:[
-      {id:'A',color:'#e8590c',history:[person(200,200),person(250,200),person(300,200)]},
-      {id:'B',color:'#0d9488',history:[person(450,204),person(400,204),person(350,204)]}
-    ],
-    detections:[
-      {id:'d1',...person(298,203),track:'B'},
-      {id:'d2',...person(352,201),track:'A'}
-    ]
+    story:'<b>A</b> (black coat) and <b>B</b> (red-and-blue jacket) walk past each other. First decide by what you see, then press <b>Check</b> and compare the two ways of measuring the cost.',
+    ...SCENES.crossing
   }
 ];
 
@@ -110,21 +79,6 @@ export function optimalAssignment(round,matrix){
   };
   search(0,new Set(),{},0);
   return best;
-}
-
-/** Greedy nearest neighbour: repeatedly take the cheapest admissible remaining pair. */
-export function greedyAssignment(round,matrix){
-  const pairs=[];
-  matrix.forEach((row,i)=>row.forEach((cell,j)=>{if(!cell.gated)pairs.push({i,j,cost:cell.cost})}));
-  pairs.sort((a,b)=>a.cost-b.cost);
-  const usedTracks=new Set(),usedDetections=new Set();
-  const assignment=Object.fromEntries(round.tracks.map(track=>[track.id,MISSING]));
-  for(const pair of pairs){
-    if(usedTracks.has(pair.i)||usedDetections.has(pair.j))continue;
-    usedTracks.add(pair.i);usedDetections.add(pair.j);
-    assignment[round.tracks[pair.i].id]=round.detections[pair.j].id;
-  }
-  return{assignment,total:assignmentCost(round,matrix,assignment)};
 }
 
 /** The identities that are actually correct (what a perfect tracker would output). */
