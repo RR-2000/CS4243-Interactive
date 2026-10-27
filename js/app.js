@@ -1,3 +1,7 @@
+import {createTrackerLab} from './tracking/tracker-lab.js?v=1';
+import {createAssociationLab} from './tracking/association-lab.js?v=1';
+import {DEFAULT_ETA,DEFAULT_PSR_THRESHOLD} from './tracking/trackers.js';
+
 (()=>{
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const clamp=(v,a=0,b=255)=>Math.max(a,Math.min(b,v));
@@ -64,7 +68,31 @@ const experiments=[
   mount(){mountOpticalFlow(this)},
   destroy(){destroyOpticalFlow(this)}
 }
+, {
+  group:'Tracking',
+  id:'mosseTracker',
+  icon:'◎',
+  title:'Live MOSSE vs. NCC tracker (L12)',
+  description:'Draw a box on your webcam and break a fixed NCC template and an adaptive MOSSE filter side by side: head turns, hand occlusion, people crossing.',
+  state:{source:'webcam',scenario:'turn',eta:DEFAULT_ETA,threshold:DEFAULT_PSR_THRESHOLD,gate:false,facing:'user'},
+  mount(){trackerLab.mount(this)},
+  destroy(){trackerLab.destroy()}
+}
+, {
+  group:'Tracking',
+  id:'dataAssociation',
+  icon:'⇄',
+  title:'Data association exercise (L12)',
+  description:'Drag each track onto a detection in the next frame, then compare your matching with greedy and Hungarian assignment.',
+  state:{round:0,cue:null,assignment:{},checked:false,revealed:false},
+  mount(){associationLab.mount(this)},
+  destroy(){associationLab.destroy()}
+}
 ];
+
+const labContext={root,$,$$,controlRange,bindRange,segment,bindSegment,heatColor,app:state,navigate:id=>mount(id),refreshGuide:()=>renderParameterGuide(state.active)};
+const trackerLab=createTrackerLab(labContext);
+const associationLab=createAssociationLab(labContext);
 
 const FLOW_PROC_WIDTH=420;
 const FLOW_WINDOW=17;
@@ -1356,7 +1384,66 @@ def compare_lucas_kanade(frame_a, frame_b, pyramid_levels=3):
     corners = cv2.goodFeaturesToTrack(gray_a, maxCorners=220, qualityLevel=0.01, minDistance=7)
     single, _, _ = cv2.calcOpticalFlowPyrLK(gray_a, gray_b, corners, None, maxLevel=0)
     multi, _, _ = cv2.calcOpticalFlowPyrLK(gray_a, gray_b, corners, None, maxLevel=pyramid_levels)
-    return corners, single, multi`
+    return corners, single, multi`,
+
+  mosseTracker:`import numpy as np
+
+def preprocess(patch):
+    patch = np.log1p(patch.astype(float))
+    patch = (patch - patch.mean()) / (patch.std() + 1e-5)
+    return patch * np.outer(np.hanning(patch.shape[0]), np.hanning(patch.shape[1]))
+
+def psr(response, exclude=11):
+    y, x = np.unravel_index(response.argmax(), response.shape)
+    mask = np.ones_like(response, bool)
+    mask[max(0, y-exclude//2):y+exclude//2+1, max(0, x-exclude//2):x+exclude//2+1] = False
+    side = response[mask]
+    return (response.max() - side.mean()) / (side.std() + 1e-5), (y, x)
+
+class Mosse:
+    def __init__(self, patch, eta=0.125, sigma=2.0, lam=1e-2):
+        h, w = patch.shape
+        yy, xx = np.mgrid[:h, :w]
+        g = np.exp(-((xx - w//2)**2 + (yy - h//2)**2) / (2 * sigma**2))
+        self.G, self.eta, self.lam = np.fft.fft2(np.fft.ifftshift(g)), eta, lam
+        F = np.fft.fft2(preprocess(patch))
+        self.A, self.B = self.G * np.conj(F), F * np.conj(F)
+
+    def track(self, patch, gate=False, threshold=7.0):
+        F = np.fft.fft2(preprocess(patch))
+        H = self.A / (self.B + self.lam * self.B.real.mean())
+        response = np.real(np.fft.ifft2(F * H))
+        score, (dy, dx) = psr(np.fft.fftshift(response))
+        if gate and score < threshold:
+            return score, None                       # weak peak: hold the box, skip the update
+        # caller moves the box by (dx, dy) − centre and passes the new patch to update()
+        return score, (dx - patch.shape[1]//2, dy - patch.shape[0]//2)
+
+    def update(self, new_patch):
+        F = np.fft.fft2(preprocess(new_patch))
+        self.A = (1 - self.eta) * self.A + self.eta * self.G * np.conj(F)
+        self.B = (1 - self.eta) * self.B + self.eta * F * np.conj(F)
+
+# Fixed-template baseline: cv2.matchTemplate(search, template, cv2.TM_CCOEFF_NORMED)`,
+
+  dataAssociation:`import numpy as np
+from scipy.optimize import linear_sum_assignment
+
+def iou(a, b):                       # boxes as (cx, cy, w, h)
+    ix = max(0, min(a[0]+a[2]/2, b[0]+b[2]/2) - max(a[0]-a[2]/2, b[0]-b[2]/2))
+    iy = max(0, min(a[1]+a[3]/2, b[1]+b[3]/2) - max(a[1]-a[3]/2, b[1]-b[3]/2))
+    inter = ix * iy
+    return inter / (a[2]*a[3] + b[2]*b[3] - inter)
+
+def associate(predicted_tracks, detections, gate=0.8, miss_cost=1.0):
+    cost = np.array([[1 - iou(t, d) for d in detections] for t in predicted_tracks])
+    cost[cost > gate] = 1e6                          # gating: forbid implausible pairs
+    dummy = np.full((len(predicted_tracks), len(predicted_tracks)), 1e6)
+    np.fill_diagonal(dummy, miss_cost)               # "missing" column per track
+    rows, cols = linear_sum_assignment(np.hstack([cost, dummy]))  # Hungarian
+    matches = {r: c for r, c in zip(rows, cols) if c < len(detections)}
+    new_tracks = set(range(len(detections))) - set(matches.values())
+    return matches, new_tracks       # unmatched tracks are "missing" this frame`
 };
 
 const WIKI={
@@ -1388,7 +1475,14 @@ const WIKI={
   template:'https://en.wikipedia.org/wiki/Template_matching',
   opticalFlow:'https://en.wikipedia.org/wiki/Optical_flow',
   lucasKanade:'https://en.wikipedia.org/wiki/Lucas%E2%80%93Kanade_method',
-  imagePyramid:'https://en.wikipedia.org/wiki/Pyramid_(image_processing)'
+  imagePyramid:'https://en.wikipedia.org/wiki/Pyramid_(image_processing)',
+  videoTracking:'https://en.wikipedia.org/wiki/Video_tracking',
+  mosse:'https://www.cs.colostate.edu/~vision/publications/bolme_cvpr10.pdf',
+  hungarian:'https://en.wikipedia.org/wiki/Hungarian_algorithm',
+  assignment:'https://en.wikipedia.org/wiki/Assignment_problem',
+  iou:'https://en.wikipedia.org/wiki/Jaccard_index',
+  sort:'https://arxiv.org/abs/1602.00763',
+  deepSort:'https://arxiv.org/abs/1703.07402'
 };
 
 const param=(name,value,description,active=true)=>({name,value:String(value),description,active});
@@ -1422,6 +1516,8 @@ function guideFor(id){
   if(id==='hough')return{overview:'All three sliders affect either the edge candidates, accumulator peaks, or rendered lines. Only the accumulator visual is remapped with nearest-neighbor sampling to match the input image aspect ratio.',params:[param('Edge threshold',s.edgeThreshold,'Minimum Sobel magnitude required for a pixel to vote.'),param('Peak threshold',`${s.voteThreshold}%`,'Minimum accumulator value as a percentage of the strongest vote.'),param('Maximum lines',s.lines,'Caps the number of separated accumulator peaks drawn on the image.'),param('Accumulator display','Input aspect ratio','Changes only the displayed Hough-space shape; the underlying θ–ρ votes and detected peaks are unchanged.')],links:[link('Hough transform',WIKI.hough)]};
   if(id==='template')return{overview:'There are no sliders. The dragged rectangle is the tunable input: its position and dimensions define the template patch.',params:[param('Patch',s.rect?`${Math.round(s.rect.w)} × ${Math.round(s.rect.h)}`:'Not selected','The selected pixels are compared at every valid source position using CC and zero-mean normalized CC.',Boolean(s.rect))],links:[link('Template matching',WIKI.template),link('Cross-correlation',WIKI.correlation)]};
   if(id==='opticalFlow')return{overview:'The same Sintel adjacent pair and the same detected points feed both Lucas–Kanade variants. Extra motion changes only the teaching stress test; the GT panel stays tied to the original pair.',params:[param('Extra motion',`${s.extraMotion} px`,'Horizontally shifts the second frame for the comparison panels only; it is not part of the original Sintel ground truth.'),param('Pyramid levels',s.pyramidLevels,'Adds coarser resolutions before the full-resolution refinement. The display shows one more resolution than the number of downsampling steps.'),param('Tracked points',s.trackedPoints,'Sets the maximum number of shared corner points used by both LK variants.')],links:[link('Optical flow',WIKI.opticalFlow),link('Lucas–Kanade method',WIKI.lucasKanade),link('Image pyramid',WIKI.imagePyramid)]};
+  if(id==='mosseTracker')return{overview:'Both trackers start from the same box and search the same window (2 × the box). Only the scoring model and the update rule differ, so every difference you see comes from “learn or don’t learn”.',params:[param('Video source',s.source==='sim'?`Simulated · ${s.scenario}`:'Webcam','The scripted scenes reproduce the three classroom experiments and know the true target box, so they can report when a tracker is lost.'),param('Learning rate η',Number(s.eta).toFixed(3),'MOSSE update A ← (1−η)A + η·new, B ← (1−η)B + η·new. Small η: stable but slow to adapt (goes stale). Large η: adapts fast but also learns occluders (drifts). NCC never updates.'),param('PSR threshold',s.threshold,'A peak with PSR below this is called weak. It colours the readouts in both modes and decides skipping when the gate is on. Bolme et al. report PSR ≈ 20–60 when tracking well and < 7 on failure.'),param('Skip update when the peak is weak',s.gate?'on':'off',s.gate?'On a weak frame MOSSE holds its box and does not train on the frame, so an occluder never enters A and B. Trade-off: a held box does not move, so a target that moves away while the peak is weak is left behind; practical trackers add a re-detection step.':'Off: MOSSE trains on every frame, even when the peak is weak.',s.gate),param('Search window','2 × box, one scale','Identical for both trackers. Neither estimates scale, so moving closer to the camera also breaks them.')],links:[link('MOSSE paper (Bolme et al., 2010)',WIKI.mosse),link('Video tracking',WIKI.videoTracking),link('Template matching',WIKI.template),link('Cross-correlation',WIKI.correlation)]};
+  if(id==='dataAssociation')return{overview:'Each detection may continue at most one track. Pair cost is 1 − IoU between the track’s reference box and the detection; leaving a track unmatched costs 1.00, worse than any admissible pair.',params:[param('Round',`${s.round+1}`,['Warm-up: the Data Association slide, with gating, a missing track and a new detection.','Greedy trap: taking the cheapest pair first strands a track; the minimum-total solution does not.','Crossing: two people swap sides between frames — the walk-past failure.'][s.round]),param('Cost measured from',s.cue==='predicted'?'Predicted box':'Last box',s.cue==='predicted'?'Constant-velocity prediction: last position + last displacement (the Kalman prediction in SORT, without noise terms).':'The track’s box at frame t. No motion model, so people who cross look closer to each other’s old positions.'),param('Gate','IoU < 0.2','Pairs that overlap less than this are shown as — and are never matched.'),param('Missing cost','1.00','The dummy column that lets the solver leave a track unmatched instead of forcing a bad match.')],links:[link('Hungarian algorithm',WIKI.hungarian),link('Assignment problem',WIKI.assignment),link('IoU (Jaccard index)',WIKI.iou),link('SORT',WIKI.sort),link('DeepSORT',WIKI.deepSort)]};
   return null;
 }
 
